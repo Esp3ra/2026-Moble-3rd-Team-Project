@@ -29,5 +29,7 @@ jobs:
           persist-credentials: false
       - name: Test collaboration policy
         run: python3 -m unittest discover -s scripts/tests -v
+      - name: Test review issue completion
+        run: node --test .github/scripts/close-review-issues.test.cjs
       - name: Check repository and PR policy
         run: python3 scripts/check_repository.py

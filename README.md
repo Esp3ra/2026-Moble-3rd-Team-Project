@@ -41,6 +41,10 @@ PR의 base는 **Alpha**, head는 본인의 작업 브랜치입니다. `main`·`A
 
 ## 협업 안내
 
+PR 검토 중 병합을 막는 문제는 [Issue](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/issues/new?template=pr_review.yml)에 기록합니다.
+작업자가 같은 PR을 수정하고 관리자가 Merge하면, 연결된 검토 Issue는 해결 완료로 자동 종료됩니다.
+문제 기록만을 위한 문서·문서 브랜치를 따로 만들지 않습니다. 자세한 흐름은 협업 안내를 참고하세요.
+
 - [협업·검토·관리자 설정](docs/COLLABORATION.md)
 - [초기 설정과 보호 규칙 기록](docs/SETUP.md)
 - [브랜치 승격과 태그 번호](docs/VERSIONING.md)

@@ -1,0 +1,37 @@
+{
+  "name": "PR 검토 수정 요청",
+  "description": "PR 검토 중 발견한 병합 차단 문제를 기록합니다. 작업자는 같은 PR을 갱신합니다.",
+  "title": "[PR 검토] ",
+  "labels": ["pr-review"],
+  "body": [
+    {
+      "type": "markdown",
+      "attributes": {"value": "일반 작업마다 Issue를 만들 필요는 없습니다. 병합을 막는 문제를 기록하고, PR이 Merge되면 연결된 검토 Issue가 해결 완료로 자동 종료됩니다. 비밀번호·토큰·실제 DB 자료는 제외하세요."}
+    },
+    {
+      "type": "input", "id": "related_pr",
+      "attributes": {"label": "관련 PR", "description": "자동 종료 대상인 PR 하나를 정확히 입력합니다. 같은 저장소의 PR URL 또는 #번호 형식입니다.", "placeholder": "https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/pull/번호"},
+      "validations": {"required": true}
+    },
+    {
+      "type": "dropdown", "id": "target_branch",
+      "attributes": {"label": "PR 대상 브랜치", "options": ["Alpha", "Beta", "Release", "main"]},
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea", "id": "problem",
+      "attributes": {"label": "문제와 병합할 수 없는 이유", "placeholder": "현재 동작, 기대한 동작, 사용자·기존 기능에 미치는 영향을 적어주세요."},
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea", "id": "reproduction",
+      "attributes": {"label": "발생 조건과 확인 위치", "placeholder": "재현 순서, 관련 파일·줄 번호, 확인한 커밋을 적어주세요. 재현하지 못했다면 그 사실을 구분해주세요."},
+      "validations": {"required": true}
+    },
+    {
+      "type": "textarea", "id": "acceptance",
+      "attributes": {"label": "수정 완료 조건", "placeholder": "작업자가 무엇을 고쳐야 하고, 재검토에서 무엇을 확인하면 병합할 수 있는지 적어주세요."},
+      "validations": {"required": true}
+    }
+  ]
+}

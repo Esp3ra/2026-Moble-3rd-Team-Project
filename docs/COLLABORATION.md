@@ -31,6 +31,30 @@ OWNER `Esp3ra`는 예외로 main·Alpha·Beta·Release에 PR 없이 일반 push�
 직접 push에는 사전 PR·필수 CI 조건이 적용되지 않지만 push 후 정책 CI는 계속 실행됩니다.
 강제 push·브랜치 삭제와 기존 태그의 이동·삭제 차단은 OWNER에게도 적용합니다.
 
+## PR 검토 중 문제를 Issue로 관리
+
+문제·수정 요청은 [PR 검토 Issue 양식](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/issues/new?template=pr_review.yml)으로 기록합니다.
+Issue 자체는 코드 브랜치를 만들지 않습니다. 모든 기능 작업마다 사전 Issue를 만들도록 강제하지도 않습니다.
+
+1. 관리자가 PR 검토에서 병합을 막는 문제를 발견하면 중복 Issue를 확인합니다.
+2. `pr-review` 라벨과 **관련 PR** 항목에 해당 PR URL 또는 `#번호` 하나를 적고, 문제·발생 조건·파일 위치·수정 완료 조건을 기록합니다. PR에는 `Refs #이슈번호`나 Issue 링크를 남깁니다.
+3. 작업자가 Issue를 확인하고 기존 작업 브랜치에 수정하여 **같은 PR을 갱신**합니다. Issue 댓글에 수정 커밋과 확인 결과를 남기고 Open 상태를 유지합니다.
+4. 관리자가 수정 완료 조건을 재검토하고 PR을 Merge합니다.
+5. 자동화가 관련 PR과 정확히 연결된 Open `pr-review` Issue에 병합 결과를 남기고 **Closed(completed), 해결 완료**로 종료합니다.
+
+수정 push만 했거나 PR을 Merge 없이 닫았다면 Issue는 종료하지 않습니다.
+일반 Issue·다른 PR의 Issue도 자동 종료 대상에서 제외합니다.
+Issue에 일반적으로 PR 번호를 언급하는 것만으로는 자동 종료하지 않으며 전용 **관련 PR** 항목을 사용합니다.
+
+GitHub의 `Closes #번호` 자동 종료는 기본 브랜치 대상 PR에 적용됩니다.
+현재 기본 브랜치는 main이므로 Alpha·Beta·Release에는 전용 병합 후 자동화를 사용합니다.
+OWNER 직접 push에는 Merge 이벤트가 없으므로 완료 확인 후 관리자가 Issue를 수동 종료합니다.
+
+Issue 작성 자체가 GitHub의 Merge 버튼을 차단하지는 않습니다. 미해결이면 관리자가 PR에 수정 요청·병합 보류를 표시합니다.
+자동화가 실패하면 Actions의 **Close merged PR review issues** 실행을 확인합니다.
+수동 실행은 기본적으로 대상만 확인하는 dry run이며, 실제 재처리는 PR 번호와 `dry_run=false`로 실행합니다.
+이 자동화는 main의 코드만 실행하고 PR head 코드는 실행하지 않습니다.
+
 ## 원격 보호 설정
 
 초기 설정 작업은 다음 규칙을 GitHub에 적용하고 실제 적용 결과를 별도로 확인합니다.

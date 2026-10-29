@@ -1,0 +1,45 @@
+name: Close merged PR review issues
+
+on:
+  pull_request_target:
+    branches: [main, Alpha, Beta, Release]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: '확인할 PR 번호'
+        required: true
+        type: string
+      dry_run:
+        description: '종료 대상만 확인하고 Issue는 변경하지 않음'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+concurrency:
+  group: close-review-issues-${{ github.event.pull_request.number || inputs.pull_request_number }}
+  cancel-in-progress: false
+
+jobs:
+  close-review-issues:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Privileged event: execute only the trusted main code, never PR head code.
+      - name: Checkout trusted automation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Complete review issues for the merged PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const { run } = require('./.github/scripts/close-review-issues.cjs');
+            return await run({ github, context, core });
