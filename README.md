@@ -36,6 +36,9 @@ git switch -c feature/your-name-task
 PR의 base는 **Alpha**, head는 본인의 작업 브랜치입니다. `main`·`Alpha`·`Beta`·`Release`에 직접 push하지 않습니다.
 권한이 없다면 관리자에게 초대를 요청하며 포크로 우회하지 않습니다.
 
+**OWNER 예외:** 저장소 소유자 `Esp3ra`는 `main`·`Alpha`·`Beta`·`Release`에 PR 없이 일반 push할 수 있습니다.
+직접 push 후에도 정책 CI는 실행됩니다. 강제 push·단계 브랜치 삭제·기존 태그의 이동과 삭제는 OWNER도 차단됩니다.
+
 ## 협업 안내
 
 - [협업·검토·관리자 설정](docs/COLLABORATION.md)
