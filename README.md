@@ -39,6 +39,7 @@ PR의 base는 **Alpha**, head는 본인의 작업 브랜치입니다. `main`·`A
 ## 협업 안내
 
 - [협업·검토·관리자 설정](docs/COLLABORATION.md)
+- [초기 설정과 보호 규칙 기록](docs/SETUP.md)
 - [브랜치 승격과 태그 번호](docs/VERSIONING.md)
 - [담당 분담과 공통 계약](docs/TEAM.md)
 - [관리자용 Codex 프롬프트](docs/prompts/codex-github-manager-prompt.txt)
