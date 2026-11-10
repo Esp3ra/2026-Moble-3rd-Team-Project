@@ -21,6 +21,9 @@
 
 ## 팀원 작업 시작
 
+GitHub·Codex가 처음이라면 [첫 사용 안내](docs/COLLABORATION.md#githubcodex를-처음-사용하는-팀원)를 따라 진행합니다.
+[팀원용 프롬프트](docs/prompts/codex-github-member-prompt.txt)는 첫 시작 때 사용하고, 같은 채팅의 다음 작업은 [짧은 요청 양식](docs/COLLABORATION.md#같은-채팅의-다음-요청)만 전달하면 됩니다.
+
 관리자가 이 저장소에 초대한 계정으로 초대를 수락한 뒤 실행합니다.
 팀원 계정은 아직 미정이며 현재 임의의 계정에 권한을 부여하지 않습니다.
 
