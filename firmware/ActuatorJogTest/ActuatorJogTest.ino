@@ -7,7 +7,7 @@
   Serial: 115200, one lowercase command per line, New Line/CRLF.
   r: arm one jog, j/k: opposite directions for 2000ms, s: stop, e: latch.
   a: one timed J / pause / K cycle; q/w: fine 500ms jog.
-  d/u: bounded long J/K test, disabled until both end cutoffs are verified.
+  d/u: supervised long J/K test, s stops early, 15s timeout fallback.
   No command detects position or guarantees full stroke.
 */
 #include <Arduino.h>
@@ -18,9 +18,7 @@ constexpr unsigned long FINE_JOG_MS = 500UL;
 // 100mm / rated 8mm/s = 12.5s ideal no-load travel. 15s is only a
 // provisional time ceiling, NOT proof that this unit reaches full stroke.
 constexpr unsigned long FULL_STROKE_TEST_MS = 15000UL;
-// Product information does not confirm built-in cutoff at BOTH ends.
-// Keep false until this is verified from the maker/seller or a proper limit circuit.
-constexpr bool END_CUTOFF_VERIFIED = false;
+// No end-position sensing: operator stops with s as soon as travel stops.
 constexpr unsigned long AUTO_FORWARD_MS = 5000UL;
 constexpr unsigned long AUTO_REVERSE_MS = 5000UL;
 constexpr unsigned long DIRECTION_PAUSE_MS = 500UL;
@@ -104,10 +102,6 @@ void handleCommand(char c) {
   if (c == '?') {
     if (cyclePhase != CyclePhase::IDLE) emit(F("AUTO:ACTIVE"));
     else emit(running ? F("RUNNING") : (armed ? F("ARMED") : F("LOCKED:R_REQUIRED")));
-    return;
-  }
-  if ((c == 'd' || c == 'u') && !END_CUTOFF_VERIFIED) {
-    emit(F("ERR:END_CUTOFF_UNVERIFIED_USE_Q_W"));
     return;
   }
   if (c != 'r' && c != 'j' && c != 'k' && c != 'a' &&
