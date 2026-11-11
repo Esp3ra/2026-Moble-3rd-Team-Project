@@ -7,7 +7,7 @@
   Serial: 115200, one lowercase command per line, New Line/CRLF.
   r: arm one jog, j/k: opposite directions for 2000ms, s: stop, e: latch.
   a: one timed J / pause / K cycle; q/w: fine 500ms jog.
-  d/u: supervised long J/K test, s stops early, 15s timeout fallback.
+  d/u: supervised long J/K test, s stops early, 11.5s timeout fallback.
   No command detects position or guarantees full stroke.
 */
 #include <Arduino.h>
@@ -15,9 +15,9 @@
 constexpr uint8_t ENA = 9, IN1 = 7, IN2 = 8;
 constexpr unsigned long JOG_MS = 2000UL;
 constexpr unsigned long FINE_JOG_MS = 500UL;
-// 100mm / rated 8mm/s = 12.5s ideal no-load travel. 15s is only a
-// provisional time ceiling, NOT proof that this unit reaches full stroke.
-constexpr unsigned long FULL_STROKE_TEST_MS = 15000UL;
+// User-selected test duration after observing this setup (2026-11-11).
+// Timed output only; NOT position sensing or guaranteed full-stroke detection.
+constexpr unsigned long FULL_STROKE_TEST_MS = 11500UL;
 // No end-position sensing: operator stops with s as soon as travel stops.
 constexpr unsigned long AUTO_FORWARD_MS = 5000UL;
 constexpr unsigned long AUTO_REVERSE_MS = 5000UL;
