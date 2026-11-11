@@ -6,14 +6,22 @@
   This is not the integrated controller or a safety-rated stop.
   Serial: 115200, one lowercase command per line, New Line/CRLF.
   r: arm one jog, j/k: opposite directions for 2000ms, s: stop, e: latch.
-  d/u full-stroke commands are intentionally rejected.
+  a: one timed J / pause / K cycle. d/u full-stroke commands rejected.
 */
 #include <Arduino.h>
 
 constexpr uint8_t ENA = 9, IN1 = 7, IN2 = 8;
 constexpr unsigned long JOG_MS = 2000UL;
+constexpr unsigned long AUTO_FORWARD_MS = 5000UL;
+constexpr unsigned long AUTO_REVERSE_MS = 5000UL;
+constexpr unsigned long DIRECTION_PAUSE_MS = 500UL;
+// J is not verified as physical extension. Set false to start in K direction.
+constexpr bool AUTO_FIRST_IS_J = true;
 constexpr unsigned long ARM_MS = 10000UL;
 constexpr uint8_t SPEED = 255;
+enum class CyclePhase : uint8_t { IDLE, FIRST, PAUSE, RETURNING };
+CyclePhase cyclePhase = CyclePhase::IDLE;
+unsigned long motionDuration = JOG_MS, pausedAt = 0;
 bool running = false, armed = false, locked = true;
 unsigned long startedAt = 0, armedAt = 0, lastByteAt = 0;
 char commandByte = 0;
@@ -31,14 +39,51 @@ void clearPending() {
   for (uint8_t i = 0; i < 64 && Serial.available(); ++i) Serial.read();
 }
 
-void stopMotor() {
+void disableOutput() {
   analogWrite(ENA, 0);  // Disable bridge before changing direction inputs.
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
   running = false;
+}
+
+void stopMotor() {
+  disableOutput();
+  cyclePhase = CyclePhase::IDLE;
   armed = false;
   locked = true;
   clearPending();
+}
+
+void startMotion(bool directionJ, unsigned long duration) {
+  // Called only from idle/disabled outputs, never reverse an enabled bridge.
+  digitalWrite(IN1, directionJ ? HIGH : LOW);
+  digitalWrite(IN2, directionJ ? LOW : HIGH);
+  startedAt = millis();
+  motionDuration = duration;
+  running = true;
+  analogWrite(ENA, SPEED);
+}
+
+void serviceMotion() {
+  if (running && millis() - startedAt >= motionDuration) {
+    disableOutput();
+    if (cyclePhase == CyclePhase::FIRST) {
+      cyclePhase = CyclePhase::PAUSE;
+      pausedAt = millis();
+      emit(F("AUTO:PAUSE"));
+    } else {
+      const bool cycleDone = cyclePhase == CyclePhase::RETURNING;
+      stopMotor();
+      emit(cycleDone ? F("AUTO_DONE:LOCKED_R_REQUIRED")
+                     : F("JOG_DONE:LOCKED_R_REQUIRED"));
+    }
+  }
+  if (cyclePhase == CyclePhase::PAUSE &&
+      millis() - pausedAt >= DIRECTION_PAUSE_MS) {
+    cyclePhase = CyclePhase::RETURNING;
+    startMotion(!AUTO_FIRST_IS_J, AUTO_REVERSE_MS);
+    emit(F("AUTO:RETURNING"));
+  }
 }
 
 void handleCommand(char c) {
@@ -48,18 +93,19 @@ void handleCommand(char c) {
     return;
   }
   if (c == '?') {
-    emit(running ? F("RUNNING") : (armed ? F("ARMED") : F("LOCKED:R_REQUIRED")));
+    if (cyclePhase != CyclePhase::IDLE) emit(F("AUTO:ACTIVE"));
+    else emit(running ? F("RUNNING") : (armed ? F("ARMED") : F("LOCKED:R_REQUIRED")));
     return;
   }
   if (c == 'd' || c == 'u') {
     emit(F("ERR:FULL_STROKE_DISABLED_USE_J_K"));
     return;
   }
-  if (c != 'r' && c != 'j' && c != 'k') {
+  if (c != 'r' && c != 'j' && c != 'k' && c != 'a') {
     emit(F("ERR:UNKNOWN_COMMAND"));
     return;
   }
-  if (running) {
+  if (running || cyclePhase != CyclePhase::IDLE) {
     emit(F("ERR:BUSY"));
     return;
   }
@@ -68,7 +114,7 @@ void handleCommand(char c) {
     locked = false;
     armed = true;
     armedAt = millis();
-    emit(F("ARMED:ONE_JOG_WITHIN_10S"));
+    emit(F("ARMED:ONE_RUN_WITHIN_10S"));
     return;
   }
   if (locked || !armed || millis() - armedAt >= ARM_MS) {
@@ -77,12 +123,14 @@ void handleCommand(char c) {
     return;
   }
   armed = false;
-  digitalWrite(IN1, c == 'j' ? HIGH : LOW);
-  digitalWrite(IN2, c == 'j' ? LOW : HIGH);
-  startedAt = millis();
-  running = true;
-  analogWrite(ENA, SPEED);
-  emit(c == 'j' ? F("JOG:J_2000MS") : F("JOG:K_2000MS"));
+  if (c == 'a') {
+    cyclePhase = CyclePhase::FIRST;
+    startMotion(AUTO_FIRST_IS_J, AUTO_FORWARD_MS);
+    emit(F("AUTO:FIRST"));
+  } else {
+    startMotion(c == 'j', JOG_MS);
+    emit(c == 'j' ? F("JOG:J_2000MS") : F("JOG:K_2000MS"));
+  }
   clearPending();
 }
 
@@ -101,14 +149,10 @@ void setup() {
   pinMode(6, OUTPUT);
   Serial.begin(115200);
   stopMotor();
-  emit(F("BOOT:LOCKED R=ARM J/K=JOG S=STOP"));
+  emit(F("BOOT:LOCKED R=ARM J/K=JOG A=AUTO S=STOP"));
 }
 
 void loop() {
-  if (running && millis() - startedAt >= JOG_MS) {
-    stopMotor();
-    emit(F("JOG_DONE:LOCKED_R_REQUIRED"));
-  }
   if (armed && millis() - armedAt >= ARM_MS) {
     stopMotor();
     emit(F("ARM_EXPIRED:LOCKED"));
@@ -129,4 +173,6 @@ void loop() {
       if (lineLength < 2) ++lineLength;
     }
   }
+  // Process queued stop commands before admitting an automatic reversal.
+  serviceMotion();
 }
