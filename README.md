@@ -44,9 +44,11 @@ PR의 base는 **Alpha**, head는 본인의 작업 브랜치입니다. `main`·`A
 
 ## 협업 안내
 
-PR 검토 중 병합을 막는 문제는 [Issue](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/issues/new?template=pr_review.yml)에 기록합니다.
-작업자가 같은 PR을 수정하고 관리자가 Merge하면, 연결된 검토 Issue는 해결 완료로 자동 종료됩니다.
-문제 기록만을 위한 문서·문서 브랜치를 따로 만들지 않습니다. 자세한 흐름은 협업 안내를 참고하세요.
+현재 PR에서 해결할 수정은 **PR 리뷰·수정 요청**으로 처리하고 같은 PR을 갱신합니다.
+PR 밖에서도 추적할 버그·기능·후속 작업은 [일반 Issue](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/issues/new?template=work_item.yml)로 관리합니다.
+별도 추적이 필요하며 한 PR의 병합으로 완료되는 요청만 [검토 Issue](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/issues/new?template=pr_review.yml)를 사용합니다.
+`pr-review` 검토 Issue만 Merge 후 자동 종료하며, 일반 Issue는 목표 브랜치의 완료 조건을 확인한 뒤 관리자가 닫습니다.
+기록용 문서·문서 브랜치는 만들지 않습니다. 자세한 흐름은 협업 안내를 참고하세요.
 
 - [협업·검토·관리자 설정](docs/COLLABORATION.md)
 - [초기 설정과 보호 규칙 기록](docs/SETUP.md)

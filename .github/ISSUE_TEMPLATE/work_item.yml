@@ -1,0 +1,83 @@
+{
+  "name": "버그·기능·후속 작업",
+  "description": "PR 밖에서도 추적할 버그·기능·여러 담당자 작업을 기록합니다. 완료 조건 확인 후 관리자가 닫습니다.",
+  "title": "[작업] ",
+  "body": [
+    {
+      "type": "markdown",
+      "attributes": {
+        "value": "현재 PR에서 바로 고칠 수정은 PR 리뷰를 사용하세요. 이 양식은 여러 PR·담당자·단계에 걸치거나 독립적으로 추적할 작업용입니다. pr-review 라벨을 붙이지 않으며 PR 병합만으로 자동 종료하지 않습니다. 비밀번호·토큰·실제 DB 자료는 제외하세요."
+      }
+    },
+    {
+      "type": "dropdown",
+      "id": "kind",
+      "attributes": {
+        "label": "작업 종류",
+        "options": [
+          "버그",
+          "기능 추가",
+          "후속 개선·공통 작업"
+        ]
+      },
+      "validations": {
+        "required": true
+      }
+    },
+    {
+      "type": "textarea",
+      "id": "scope",
+      "attributes": {
+        "label": "문제·목표와 영향 범위",
+        "placeholder": "현재·기대 동작, 발생 조건 또는 필요한 기능, 영향받는 담당·파일·기능을 적어주세요."
+      },
+      "validations": {
+        "required": true
+      }
+    },
+    {
+      "type": "input",
+      "id": "owner",
+      "attributes": {
+        "label": "담당자·협의 대상",
+        "placeholder": "GitHub 계정 또는 담당 기능. 미정이면 미정으로 기재하세요."
+      }
+    },
+    {
+      "type": "dropdown",
+      "id": "target_branch",
+      "attributes": {
+        "label": "완료를 확인할 목표 브랜치",
+        "options": [
+          "Alpha",
+          "Beta",
+          "Release",
+          "main",
+          "관리자와 협의 필요"
+        ]
+      },
+      "validations": {
+        "required": true
+      }
+    },
+    {
+      "type": "textarea",
+      "id": "acceptance",
+      "attributes": {
+        "label": "완료 조건",
+        "placeholder": "목표 브랜치에서 확인할 동작·검증과 남은 작업을 적어주세요. 여러 PR·실제 환경 검증이 필요하면 모두 완료된 뒤 종료합니다."
+      },
+      "validations": {
+        "required": true
+      }
+    },
+    {
+      "type": "textarea",
+      "id": "related_prs",
+      "attributes": {
+        "label": "관련 PR·리뷰·Issue",
+        "placeholder": "여러 링크를 적어도 됩니다. 아직 없으면 없음 또는 미정으로 적어주세요."
+      }
+    }
+  ]
+}
