@@ -6,12 +6,21 @@
   This is not the integrated controller or a safety-rated stop.
   Serial: 115200, one lowercase command per line, New Line/CRLF.
   r: arm one jog, j/k: opposite directions for 2000ms, s: stop, e: latch.
-  a: one timed J / pause / K cycle. d/u full-stroke commands rejected.
+  a: one timed J / pause / K cycle; q/w: fine 500ms jog.
+  d/u: bounded long J/K test, disabled until both end cutoffs are verified.
+  No command detects position or guarantees full stroke.
 */
 #include <Arduino.h>
 
 constexpr uint8_t ENA = 9, IN1 = 7, IN2 = 8;
 constexpr unsigned long JOG_MS = 2000UL;
+constexpr unsigned long FINE_JOG_MS = 500UL;
+// 100mm / rated 8mm/s = 12.5s ideal no-load travel. 15s is only a
+// provisional time ceiling, NOT proof that this unit reaches full stroke.
+constexpr unsigned long FULL_STROKE_TEST_MS = 15000UL;
+// Product information does not confirm built-in cutoff at BOTH ends.
+// Keep false until this is verified from the maker/seller or a proper limit circuit.
+constexpr bool END_CUTOFF_VERIFIED = false;
 constexpr unsigned long AUTO_FORWARD_MS = 5000UL;
 constexpr unsigned long AUTO_REVERSE_MS = 5000UL;
 constexpr unsigned long DIRECTION_PAUSE_MS = 500UL;
@@ -97,11 +106,12 @@ void handleCommand(char c) {
     else emit(running ? F("RUNNING") : (armed ? F("ARMED") : F("LOCKED:R_REQUIRED")));
     return;
   }
-  if (c == 'd' || c == 'u') {
-    emit(F("ERR:FULL_STROKE_DISABLED_USE_J_K"));
+  if ((c == 'd' || c == 'u') && !END_CUTOFF_VERIFIED) {
+    emit(F("ERR:END_CUTOFF_UNVERIFIED_USE_Q_W"));
     return;
   }
-  if (c != 'r' && c != 'j' && c != 'k' && c != 'a') {
+  if (c != 'r' && c != 'j' && c != 'k' && c != 'a' &&
+      c != 'q' && c != 'w' && c != 'd' && c != 'u') {
     emit(F("ERR:UNKNOWN_COMMAND"));
     return;
   }
@@ -127,6 +137,12 @@ void handleCommand(char c) {
     cyclePhase = CyclePhase::FIRST;
     startMotion(AUTO_FIRST_IS_J, AUTO_FORWARD_MS);
     emit(F("AUTO:FIRST"));
+  } else if (c == 'q' || c == 'w') {
+    startMotion(c == 'q', FINE_JOG_MS);
+    emit(c == 'q' ? F("FINE:J_500MS") : F("FINE:K_500MS"));
+  } else if (c == 'd' || c == 'u') {
+    startMotion(c == 'd', FULL_STROKE_TEST_MS);
+    emit(c == 'd' ? F("LONG:J_TIME_LIMIT") : F("LONG:K_TIME_LIMIT"));
   } else {
     startMotion(c == 'j', JOG_MS);
     emit(c == 'j' ? F("JOG:J_2000MS") : F("JOG:K_2000MS"));

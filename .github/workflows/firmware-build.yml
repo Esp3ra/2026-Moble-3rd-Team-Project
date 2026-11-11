@@ -23,6 +23,8 @@ jobs:
             actuator: enabled-compile-only
           - sketch: ActuatorJogTest
             actuator: not-applicable
+          - sketch: ActuatorJogTest
+            actuator: long-test-compile-only
           - sketch: OrderPalletFeeder
             actuator: dry-run
           - sketch: OrderPalletFeeder
@@ -52,6 +54,9 @@ jobs:
           cp -R "firmware/$SKETCH_NAME" "$RUNNER_TEMP/$SKETCH_NAME"
           if [ "$ACTUATOR_VARIANT" = "enabled-compile-only" ]; then
             sed -i 's/ACTUATOR_HARDWARE_VERIFIED = false/ACTUATOR_HARDWARE_VERIFIED = true/' "$RUNNER_TEMP/$SKETCH_NAME/Config.h"
+          fi
+          if [ "$ACTUATOR_VARIANT" = "long-test-compile-only" ]; then
+            sed -i 's/END_CUTOFF_VERIFIED = false/END_CUTOFF_VERIFIED = true/' "$RUNNER_TEMP/$SKETCH_NAME/ActuatorJogTest.ino"
           fi
           if [ "$ACTUATOR_VARIANT" = "live-compile-only" ]; then
             sed -i 's/DRY_RUN = true/DRY_RUN = false/' "$RUNNER_TEMP/$SKETCH_NAME/Config.h"
