@@ -1,0 +1,46 @@
+name: UNO firmware build
+
+on:
+  pull_request:
+    branches: [Alpha, Beta, Release]
+  push:
+    branches: [Alpha, Beta, Release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-uno:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        actuator: [disabled, enabled-compile-only]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install Arduino CLI 1.5.1
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 https://github.com/arduino/arduino-cli/releases/download/v1.5.1/arduino-cli_1.5.1_Linux_64bit.tar.gz -o "$RUNNER_TEMP/arduino-cli.tar.gz"
+          mkdir -p "$RUNNER_TEMP/arduino-cli-bin"
+          tar -xzf "$RUNNER_TEMP/arduino-cli.tar.gz" -C "$RUNNER_TEMP/arduino-cli-bin" arduino-cli
+          echo "$RUNNER_TEMP/arduino-cli-bin" >> "$GITHUB_PATH"
+      - name: Install pinned core and library
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr@1.8.8
+          arduino-cli lib install "AccelStepper@1.64"
+      - name: Prepare isolated compile copy
+        env:
+          ACTUATOR_VARIANT: ${{ matrix.actuator }}
+        shell: bash
+        run: |
+          cp -R firmware/ConveyorActuatorController "$RUNNER_TEMP/ConveyorActuatorController"
+          if [ "$ACTUATOR_VARIANT" = "enabled-compile-only" ]; then
+            sed -i 's/ACTUATOR_HARDWARE_VERIFIED = false/ACTUATOR_HARDWARE_VERIFIED = true/' "$RUNNER_TEMP/ConveyorActuatorController/Config.h"
+          fi
+      - name: Compile only, never upload
+        run: arduino-cli compile --fqbn arduino:avr:uno "$RUNNER_TEMP/ConveyorActuatorController"
