@@ -1,44 +1,28 @@
 /*
-  UNO + L298N channel A: unloaded actuator commissioning only.
+  UNO + L298N standalone test. Commands: a = one round trip, s = stop.
+  Serial 115200 / New Line or CRLF. No arming command required.
   ENA D9 (jumper removed), IN1 D7, IN2 D8, common GND.
-  Conveyor driver power MUST be disconnected during this test.
-  No physical E-stop or limit input is configured in this sketch.
-  This is not the integrated controller or a safety-rated stop.
-  Serial: 115200, one lowercase command per line, New Line/CRLF.
-  r: arm one jog, j/k: opposite directions for 2000ms, s: stop, e: latch.
-  a: one timed J / pause / K cycle; q/w: fine 500ms jog.
-  d/u: supervised long J/K test, s stops early, 11.5s timeout fallback.
-  No command detects position or guarantees full stroke.
+  Conveyor motor power stays disconnected. No physical E-stop/limit sensing.
 */
 #include <Arduino.h>
 
 constexpr uint8_t ENA = 9, IN1 = 7, IN2 = 8;
-constexpr unsigned long JOG_MS = 2000UL;
-constexpr unsigned long FINE_JOG_MS = 500UL;
-// User-selected test duration after observing this setup (2026-11-11).
-// Timed output only; NOT position sensing or guaranteed full-stroke detection.
-constexpr unsigned long FULL_STROKE_TEST_MS = 11500UL;
-// No end-position sensing: operator stops with s as soon as travel stops.
 constexpr unsigned long AUTO_FORWARD_MS = 11500UL;
 constexpr unsigned long AUTO_REVERSE_MS = 11500UL;
 constexpr unsigned long DIRECTION_PAUSE_MS = 500UL;
-// J is not verified as physical extension. Set false to start in K direction.
-constexpr bool AUTO_FIRST_IS_J = true;
-constexpr unsigned long ARM_MS = 10000UL;
 constexpr uint8_t SPEED = 255;
+// Existing J electrical direction. This does not identify physical position.
+constexpr bool AUTO_FIRST_IS_J = true;
+
 enum class CyclePhase : uint8_t { IDLE, FIRST, PAUSE, RETURNING };
 CyclePhase cyclePhase = CyclePhase::IDLE;
-unsigned long motionDuration = JOG_MS, pausedAt = 0;
-bool running = false, armed = false, locked = true;
-unsigned long startedAt = 0, armedAt = 0, lastByteAt = 0;
+unsigned long phaseStartedAt = 0, lastByteAt = 0;
 char commandByte = 0;
 uint8_t lineLength = 0;
 
 void emit(const __FlashStringHelper* message) {
   const size_t needed = strlen_P(reinterpret_cast<PGM_P>(message)) + 2;
-  if (Serial.availableForWrite() >= static_cast<int>(needed)) {
-    Serial.println(message);
-  }
+  if (Serial.availableForWrite() >= static_cast<int>(needed)) Serial.println(message);
 }
 
 void clearPending() {
@@ -47,128 +31,76 @@ void clearPending() {
 }
 
 void disableOutput() {
-  analogWrite(ENA, 0);  // Disable bridge before changing direction inputs.
+  analogWrite(ENA, 0);
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
-  running = false;
 }
 
 void stopMotor() {
   disableOutput();
   cyclePhase = CyclePhase::IDLE;
-  armed = false;
-  locked = true;
   clearPending();
 }
 
-void startMotion(bool directionJ, unsigned long duration) {
-  // Called only from idle/disabled outputs, never reverse an enabled bridge.
+void startMotion(bool directionJ) {
+  // Output is disabled before every direction change.
+  disableOutput();
   digitalWrite(IN1, directionJ ? HIGH : LOW);
   digitalWrite(IN2, directionJ ? LOW : HIGH);
-  startedAt = millis();
-  motionDuration = duration;
-  running = true;
+  phaseStartedAt = millis();
   analogWrite(ENA, SPEED);
 }
 
-void serviceMotion() {
-  if (running && millis() - startedAt >= motionDuration) {
-    disableOutput();
-    if (cyclePhase == CyclePhase::FIRST) {
-      cyclePhase = CyclePhase::PAUSE;
-      pausedAt = millis();
-      emit(F("AUTO:PAUSE"));
-    } else {
-      const bool cycleDone = cyclePhase == CyclePhase::RETURNING;
-      stopMotor();
-      emit(cycleDone ? F("AUTO_DONE:LOCKED_R_REQUIRED")
-                     : F("JOG_DONE:LOCKED_R_REQUIRED"));
-    }
+void handleCommand(char c) {
+  if (c == 's') {
+    stopMotor();
+    emit(F("STOPPED:READY_A"));
+    return;
   }
-  if (cyclePhase == CyclePhase::PAUSE &&
-      millis() - pausedAt >= DIRECTION_PAUSE_MS) {
-    cyclePhase = CyclePhase::RETURNING;
-    startMotion(!AUTO_FIRST_IS_J, AUTO_REVERSE_MS);
-    emit(F("AUTO:RETURNING"));
+  if (c != 'a') {
+    emit(F("ERR:USE_A_OR_S"));
+    return;
   }
+  if (cyclePhase != CyclePhase::IDLE) {
+    emit(F("BUSY:NO_QUEUED_RESTART"));
+    return;
+  }
+  cyclePhase = CyclePhase::FIRST;
+  startMotion(AUTO_FIRST_IS_J);
+  clearPending();
+  emit(F("AUTO:FIRST_11500MS"));
 }
 
-void handleCommand(char c) {
-  if (c == 's' || c == 'e') {
+void serviceMotion() {
+  const unsigned long elapsed = millis() - phaseStartedAt;
+  if (cyclePhase == CyclePhase::FIRST && elapsed >= AUTO_FORWARD_MS) {
+    disableOutput();
+    cyclePhase = CyclePhase::PAUSE;
+    phaseStartedAt = millis();
+    emit(F("AUTO:PAUSE_500MS"));
+  } else if (cyclePhase == CyclePhase::PAUSE && elapsed >= DIRECTION_PAUSE_MS) {
+    cyclePhase = CyclePhase::RETURNING;
+    startMotion(!AUTO_FIRST_IS_J);
+    emit(F("AUTO:RETURN_11500MS"));
+  } else if (cyclePhase == CyclePhase::RETURNING && elapsed >= AUTO_REVERSE_MS) {
     stopMotor();
-    emit(c == 's' ? F("STOP:LOCKED") : F("SOFTWARE_STOP:LOCKED"));
-    return;
+    emit(F("AUTO_DONE:READY_A"));
   }
-  if (c == '?') {
-    if (cyclePhase != CyclePhase::IDLE) emit(F("AUTO:ACTIVE"));
-    else emit(running ? F("RUNNING") : (armed ? F("ARMED") : F("LOCKED:R_REQUIRED")));
-    return;
-  }
-  if (c != 'r' && c != 'j' && c != 'k' && c != 'a' &&
-      c != 'q' && c != 'w' && c != 'd' && c != 'u') {
-    emit(F("ERR:UNKNOWN_COMMAND"));
-    return;
-  }
-  if (running || cyclePhase != CyclePhase::IDLE) {
-    emit(F("ERR:BUSY"));
-    return;
-  }
-  if (c == 'r') {
-    stopMotor();
-    locked = false;
-    armed = true;
-    armedAt = millis();
-    emit(F("ARMED:ONE_RUN_WITHIN_10S"));
-    return;
-  }
-  if (locked || !armed || millis() - armedAt >= ARM_MS) {
-    stopMotor();
-    emit(F("ERR:SEND_R_FIRST"));
-    return;
-  }
-  armed = false;
-  if (c == 'a') {
-    cyclePhase = CyclePhase::FIRST;
-    startMotion(AUTO_FIRST_IS_J, AUTO_FORWARD_MS);
-    emit(F("AUTO:FIRST"));
-  } else if (c == 'q' || c == 'w') {
-    startMotion(c == 'q', FINE_JOG_MS);
-    emit(c == 'q' ? F("FINE:J_500MS") : F("FINE:K_500MS"));
-  } else if (c == 'd' || c == 'u') {
-    startMotion(c == 'd', FULL_STROKE_TEST_MS);
-    emit(c == 'd' ? F("LONG:J_TIME_LIMIT") : F("LONG:K_TIME_LIMIT"));
-  } else {
-    startMotion(c == 'j', JOG_MS);
-    emit(c == 'j' ? F("JOG:J_2000MS") : F("JOG:K_2000MS"));
-  }
-  clearPending();
 }
 
 void setup() {
-  // Keep all outputs inactive before changing their pin modes.
-  digitalWrite(ENA, LOW);
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
-  pinMode(ENA, OUTPUT);
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
-  // Preserve the existing conveyor STEP/DIR wiring; never generate pulses.
-  digitalWrite(5, LOW);
-  pinMode(5, OUTPUT);
-  digitalWrite(6, LOW);
-  pinMode(6, OUTPUT);
+  digitalWrite(ENA, LOW); digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  digitalWrite(5, LOW); pinMode(5, OUTPUT);
+  digitalWrite(6, LOW); pinMode(6, OUTPUT);
   Serial.begin(115200);
   stopMotor();
-  emit(F("BOOT:LOCKED R=ARM J/K=JOG A=AUTO S=STOP"));
+  emit(F("READY A=ROUND_TRIP S=STOP"));
 }
 
 void loop() {
-  if (armed && millis() - armedAt >= ARM_MS) {
-    stopMotor();
-    emit(F("ARM_EXPIRED:LOCKED"));
-  }
   if (lineLength && millis() - lastByteAt >= 500UL) lineLength = 0;
-  // Bound parsing time and avoid delay()/blocking motion loops.
+  // Bound parsing so motion timing and stop servicing cannot be starved.
   for (uint8_t i = 0; i < 8 && Serial.available(); ++i) {
     const char c = static_cast<char>(Serial.read());
     lastByteAt = millis();
@@ -183,6 +115,6 @@ void loop() {
       if (lineLength < 2) ++lineLength;
     }
   }
-  // Process queued stop commands before admitting an automatic reversal.
+  // A pending s is processed before admitting an automatic reversal.
   serviceMotion();
 }

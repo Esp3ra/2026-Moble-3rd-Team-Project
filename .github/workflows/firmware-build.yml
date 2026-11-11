@@ -70,3 +70,7 @@ jobs:
         run: |
           g++ -std=c++11 -Wall -Wextra -Werror -pedantic firmware/tests/feeder_logic_test.cpp -o "$RUNNER_TEMP/feeder-test"
           "$RUNNER_TEMP/feeder-test"
+      - name: Test actual actuator sketch with simulated GPIO and serial
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror -pedantic -I firmware/tests/mocks firmware/tests/actuator_cycle_test.cpp -o "$RUNNER_TEMP/actuator-test"
+          "$RUNNER_TEMP/actuator-test"
