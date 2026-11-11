@@ -36,13 +36,11 @@ def prepare_logo(size):
     margin = max(5, size // 15)
     inner_size = size - (margin * 2)
     resized_logo = raw_logo.resize((inner_size, inner_size), Image.Resampling.LANCZOS)
-    
     # 둥근 모서리 사각형 흰색 배경 배지
     badge = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(badge)
     radius = int(size * 0.22)
     draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=(255, 255, 255, 255))
-    
     # 누끼 로고 합성
     badge.paste(resized_logo, (margin, margin), resized_logo)
     return badge
