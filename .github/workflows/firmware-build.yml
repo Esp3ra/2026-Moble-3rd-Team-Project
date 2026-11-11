@@ -16,7 +16,13 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        actuator: [disabled, enabled-compile-only]
+        include:
+          - sketch: ConveyorActuatorController
+            actuator: disabled
+          - sketch: ConveyorActuatorController
+            actuator: enabled-compile-only
+          - sketch: ActuatorJogTest
+            actuator: not-applicable
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -35,12 +41,13 @@ jobs:
           arduino-cli lib install "AccelStepper@1.64"
       - name: Prepare isolated compile copy
         env:
+          SKETCH_NAME: ${{ matrix.sketch }}
           ACTUATOR_VARIANT: ${{ matrix.actuator }}
         shell: bash
         run: |
-          cp -R firmware/ConveyorActuatorController "$RUNNER_TEMP/ConveyorActuatorController"
+          cp -R "firmware/$SKETCH_NAME" "$RUNNER_TEMP/$SKETCH_NAME"
           if [ "$ACTUATOR_VARIANT" = "enabled-compile-only" ]; then
-            sed -i 's/ACTUATOR_HARDWARE_VERIFIED = false/ACTUATOR_HARDWARE_VERIFIED = true/' "$RUNNER_TEMP/ConveyorActuatorController/Config.h"
+            sed -i 's/ACTUATOR_HARDWARE_VERIFIED = false/ACTUATOR_HARDWARE_VERIFIED = true/' "$RUNNER_TEMP/$SKETCH_NAME/Config.h"
           fi
       - name: Compile only, never upload
-        run: arduino-cli compile --fqbn arduino:avr:uno "$RUNNER_TEMP/ConveyorActuatorController"
+        run: arduino-cli compile --fqbn arduino:avr:uno "$RUNNER_TEMP/${{ matrix.sketch }}"

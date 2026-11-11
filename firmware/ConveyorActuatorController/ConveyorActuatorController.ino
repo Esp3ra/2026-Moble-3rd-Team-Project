@@ -1,5 +1,5 @@
 /*
-  UNO commissioning controller v0.1
+  UNO commissioning controller v0.2
   Commands: F/B conveyor, X/Y actuator, S stop all, E latch stop, ? status.
   Send one command per line (New Line or Both NL & CR), 9600 baud.
   No commands are sent to hardware automatically at boot or after reset.
@@ -71,10 +71,9 @@ void stopConveyor() {
 }
 
 void stopActuator() {
-  analogWrite(ACTUATOR_EXTEND_PWM_PIN, 0);
-  analogWrite(ACTUATOR_RETRACT_PWM_PIN, 0);
-  digitalWrite(ACTUATOR_R_EN_PIN, LOW);
-  digitalWrite(ACTUATOR_L_EN_PIN, LOW);
+  analogWrite(ACTUATOR_ENA_PIN, 0);
+  digitalWrite(ACTUATOR_IN1_PIN, LOW);
+  digitalWrite(ACTUATOR_IN2_PIN, LOW);
   actuatorState = ActuatorState::IDLE;
 }
 
@@ -205,10 +204,9 @@ void startActuator(bool extend, unsigned long now) {
   stopActuator();
   actuatorStartedAt = now;
   actuatorState = extend ? ActuatorState::EXTENDING : ActuatorState::RETRACTING;
-  digitalWrite(ACTUATOR_R_EN_PIN, HIGH);
-  digitalWrite(ACTUATOR_L_EN_PIN, HIGH);
-  analogWrite(extend ? ACTUATOR_EXTEND_PWM_PIN : ACTUATOR_RETRACT_PWM_PIN,
-              ACTUATOR_PWM);
+  digitalWrite(ACTUATOR_IN1_PIN, extend ? HIGH : LOW);
+  digitalWrite(ACTUATOR_IN2_PIN, extend ? LOW : HIGH);
+  analogWrite(ACTUATOR_ENA_PIN, ACTUATOR_PWM);
   emit(extend ? F("ACTUATOR:EXTENDING") : F("ACTUATOR:RETRACTING"));
 }
 
@@ -288,14 +286,12 @@ void serviceActuator(unsigned long now) {
 
 void setup() {
   // Establish inactive actuator outputs before making them outputs.
-  digitalWrite(ACTUATOR_EXTEND_PWM_PIN, LOW);
-  digitalWrite(ACTUATOR_RETRACT_PWM_PIN, LOW);
-  digitalWrite(ACTUATOR_R_EN_PIN, LOW);
-  digitalWrite(ACTUATOR_L_EN_PIN, LOW);
-  pinMode(ACTUATOR_EXTEND_PWM_PIN, OUTPUT);
-  pinMode(ACTUATOR_RETRACT_PWM_PIN, OUTPUT);
-  pinMode(ACTUATOR_R_EN_PIN, OUTPUT);
-  pinMode(ACTUATOR_L_EN_PIN, OUTPUT);
+  digitalWrite(ACTUATOR_ENA_PIN, LOW);
+  digitalWrite(ACTUATOR_IN1_PIN, LOW);
+  digitalWrite(ACTUATOR_IN2_PIN, LOW);
+  pinMode(ACTUATOR_ENA_PIN, OUTPUT);
+  pinMode(ACTUATOR_IN1_PIN, OUTPUT);
+  pinMode(ACTUATOR_IN2_PIN, OUTPUT);
   pinMode(ESTOP_PIN, INPUT_PULLUP);
   pinMode(RESET_PIN, INPUT_PULLUP);
   pinMode(ACTUATOR_EXTEND_LIMIT_PIN, INPUT_PULLUP);

@@ -17,19 +17,18 @@ constexpr uint8_t RESET_PIN = 3;
 constexpr unsigned long ESTOP_HEALTHY_MS = 500UL;
 constexpr unsigned long RESET_DEBOUNCE_MS = 30UL;
 
-// PROVISIONAL actuator interface: two-wire brushed DC motor + IBT-2/BTS7960.
-// Do not set true until the actual actuator, driver, supply and limit wiring
-// have been checked. A stepper/servo/RS-485 actuator needs different code.
+// Two-wire 12V/100mm actuator + L298N channel A (ENA jumper removed).
+// Keep disabled until physical E-stop/reset and external NC limits are verified.
+// Use the separate ActuatorJogTest sketch for initial unloaded 500ms tests.
 constexpr bool ACTUATOR_HARDWARE_VERIFIED = false;
-constexpr uint8_t ACTUATOR_EXTEND_PWM_PIN = 9;
-constexpr uint8_t ACTUATOR_RETRACT_PWM_PIN = 10;
-constexpr uint8_t ACTUATOR_R_EN_PIN = 7;
-constexpr uint8_t ACTUATOR_L_EN_PIN = 8;
+constexpr uint8_t ACTUATOR_ENA_PIN = 9;
+constexpr uint8_t ACTUATOR_IN1_PIN = 7;
+constexpr uint8_t ACTUATOR_IN2_PIN = 8;
 constexpr uint8_t ACTUATOR_EXTEND_LIMIT_PIN = A0;
 constexpr uint8_t ACTUATOR_RETRACT_LIMIT_PIN = A1;
 // Candidate NC limits to GND: open/HIGH blocks travel toward that end.
 // An open wire cannot be distinguished from a reached limit by this circuit.
-constexpr uint8_t ACTUATOR_PWM = 128;
+constexpr uint8_t ACTUATOR_PWM = 255;
 constexpr unsigned long ACTUATOR_TIMEOUT_MS = 3000UL;
 
 // The 3-second actuator timeout is only an initial commissioning ceiling.
