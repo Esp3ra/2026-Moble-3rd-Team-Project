@@ -140,4 +140,3 @@ CREATE TABLE `ALARM_LOGS` (
   `resolved` BOOLEAN NOT NULL DEFAULT FALSE COMMENT '관리자 조치 및 경보 해제 여부',
   PRIMARY KEY (`alarm_id`)
 ) COMMENT='설비 경보 및 인터락 장애 이력 관리 테이블 (MOBLE-ALRM-04 연동)';
-

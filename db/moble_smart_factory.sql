@@ -223,4 +223,3 @@ CREATE TABLE `ALARM_LOGS` (
   KEY `idx_alarm_resolved` (`resolved`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='설비 경보 및 인터락 장애 이력 관리 테이블 (MOBLE-ALRM-04 연동)';
-
