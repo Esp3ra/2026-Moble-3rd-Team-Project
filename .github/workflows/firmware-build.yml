@@ -23,6 +23,10 @@ jobs:
             actuator: enabled-compile-only
           - sketch: ActuatorJogTest
             actuator: not-applicable
+          - sketch: OrderPalletFeeder
+            actuator: dry-run
+          - sketch: OrderPalletFeeder
+            actuator: live-compile-only
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -49,5 +53,20 @@ jobs:
           if [ "$ACTUATOR_VARIANT" = "enabled-compile-only" ]; then
             sed -i 's/ACTUATOR_HARDWARE_VERIFIED = false/ACTUATOR_HARDWARE_VERIFIED = true/' "$RUNNER_TEMP/$SKETCH_NAME/Config.h"
           fi
+          if [ "$ACTUATOR_VARIANT" = "live-compile-only" ]; then
+            sed -i 's/DRY_RUN = true/DRY_RUN = false/' "$RUNNER_TEMP/$SKETCH_NAME/Config.h"
+          fi
       - name: Compile only, never upload
         run: arduino-cli compile --fqbn arduino:avr:uno "$RUNNER_TEMP/${{ matrix.sketch }}"
+
+  feeder-state-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Test feeder transitions without hardware
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror -pedantic firmware/tests/feeder_logic_test.cpp -o "$RUNNER_TEMP/feeder-test"
+          "$RUNNER_TEMP/feeder-test"
