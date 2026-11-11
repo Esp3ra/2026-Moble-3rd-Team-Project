@@ -5,13 +5,13 @@
   No physical E-stop or limit input is configured in this sketch.
   This is not the integrated controller or a safety-rated stop.
   Serial: 115200, one lowercase command per line, New Line/CRLF.
-  r: arm one jog, j/k: opposite directions for 500ms, s: stop, e: latch.
+  r: arm one jog, j/k: opposite directions for 2000ms, s: stop, e: latch.
   d/u full-stroke commands are intentionally rejected.
 */
 #include <Arduino.h>
 
 constexpr uint8_t ENA = 9, IN1 = 7, IN2 = 8;
-constexpr unsigned long JOG_MS = 500UL;
+constexpr unsigned long JOG_MS = 2000UL;
 constexpr unsigned long ARM_MS = 10000UL;
 constexpr uint8_t SPEED = 255;
 bool running = false, armed = false, locked = true;
@@ -82,7 +82,7 @@ void handleCommand(char c) {
   startedAt = millis();
   running = true;
   analogWrite(ENA, SPEED);
-  emit(c == 'j' ? F("JOG:J_500MS") : F("JOG:K_500MS"));
+  emit(c == 'j' ? F("JOG:J_2000MS") : F("JOG:K_2000MS"));
   clearPending();
 }
 

@@ -19,7 +19,7 @@ constexpr unsigned long RESET_DEBOUNCE_MS = 30UL;
 
 // Two-wire 12V/100mm actuator + L298N channel A (ENA jumper removed).
 // Keep disabled until physical E-stop/reset and external NC limits are verified.
-// Use the separate ActuatorJogTest sketch for initial unloaded 500ms tests.
+// Use the separate ActuatorJogTest sketch for initial unloaded 2-second tests.
 constexpr bool ACTUATOR_HARDWARE_VERIFIED = false;
 constexpr uint8_t ACTUATOR_ENA_PIN = 9;
 constexpr uint8_t ACTUATOR_IN1_PIN = 7;
