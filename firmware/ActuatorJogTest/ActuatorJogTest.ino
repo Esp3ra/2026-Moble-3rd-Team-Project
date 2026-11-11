@@ -19,8 +19,8 @@ constexpr unsigned long FINE_JOG_MS = 500UL;
 // Timed output only; NOT position sensing or guaranteed full-stroke detection.
 constexpr unsigned long FULL_STROKE_TEST_MS = 11500UL;
 // No end-position sensing: operator stops with s as soon as travel stops.
-constexpr unsigned long AUTO_FORWARD_MS = 5000UL;
-constexpr unsigned long AUTO_REVERSE_MS = 5000UL;
+constexpr unsigned long AUTO_FORWARD_MS = 11500UL;
+constexpr unsigned long AUTO_REVERSE_MS = 11500UL;
 constexpr unsigned long DIRECTION_PAUSE_MS = 500UL;
 // J is not verified as physical extension. Set false to start in K direction.
 constexpr bool AUTO_FIRST_IS_J = true;
