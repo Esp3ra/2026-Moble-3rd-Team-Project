@@ -20,43 +20,44 @@ DROP TABLE IF EXISTS `ASSEMBLY_LOGS`;
 DROP TABLE IF EXISTS `JOB_PALLET_MAPPINGS`;
 DROP TABLE IF EXISTS `PALLETS`;
 DROP TABLE IF EXISTS `ORDERS`;
+DROP TABLE IF EXISTS `ACCOUNTS`;
 DROP TABLE IF EXISTS `USERS`;
 DROP TABLE IF EXISTS `ROLES`;
 
 -- =============================================================================
 -- [TableGroup: 관제계정_및_권한관리]
--- 1. ROLES: 권한 및 역할 마스터 테이블 (최상위 / 운영관리자)
+-- 1. ROLES: 권한 및 역할 마스터 테이블 (관리자 / 운영자)
 -- =============================================================================
 CREATE TABLE `ROLES` (
   `role_id` INT NOT NULL AUTO_INCREMENT COMMENT '역할 고유 식별자 (PK)',
-  `role_code` VARCHAR(30) NOT NULL UNIQUE COMMENT '역할 코드 (SUPER_ADMIN, OPERATOR)',
+  `role_code` VARCHAR(30) NOT NULL UNIQUE COMMENT '역할 코드 (ADMIN, OPERATOR)',
   `role_name` VARCHAR(50) NOT NULL COMMENT '역할 명칭 (최상위 관리자, 운영 관리자)',
   `description` VARCHAR(255) DEFAULT NULL COMMENT '역할 상세 설명',
   PRIMARY KEY (`role_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='WPF 관제 사용자 권한 마스터';
+COMMENT='WPF 관제 시스템 권한 마스터';
 
 -- 초기 2대 역할 데이터 등록
 INSERT INTO `ROLES` (`role_id`, `role_code`, `role_name`, `description`) VALUES
-(1, 'SUPER_ADMIN', '최상위 관리자', '전체 시스템 제어, 설비 파라미터 설정, 계정 관리 등 전체 탭 풀 권한'),
-(2, 'OPERATOR', '운영 관리자', '7단계 실시간 공정 모니터링 및 알람 확인 등 현장 운영 관제 권한');
+(1, 'ADMIN', '최상위 관리자', '전체 설비 제어, 파라미터 세팅, 계정 관리 등 전체 탭 풀 권한'),
+(2, 'OPERATOR', '운영 관리자', '7단계 공정/AGV 실시간 모니터링 및 알람 확인 등 현장 관제 권한');
 
 -- =============================================================================
 -- [TableGroup: 관제계정_및_권한관리]
--- 2. USERS: 관제 시스템 로그인 계정 마스터 테이블
+-- 2. ACCOUNTS: 관제 로그인 계정 마스터 테이블
 -- =============================================================================
-CREATE TABLE `USERS` (
-  `user_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '사용자 고유 식별자 (PK)',
+CREATE TABLE `ACCOUNTS` (
+  `account_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '계정 고유 식별자 (PK)',
   `role_id` INT NOT NULL DEFAULT 2 COMMENT '부여된 역할 (FK -> ROLES.role_id, 기본값: OPERATOR)',
-  `emp_no` VARCHAR(50) NOT NULL UNIQUE COMMENT '로그인 사번/아이디 (예: admin, op_01)',
-  `password_hash` VARCHAR(255) NOT NULL COMMENT '암호화된 비밀번호 (Bcrypt/SHA-256)',
+  `login_id` VARCHAR(50) NOT NULL UNIQUE COMMENT '로그인 사번/아이디 (예: admin, op_01)',
+  `password_hash` VARCHAR(255) NOT NULL COMMENT '단방향 암호화 비밀번호 (Bcrypt/SHA-256)',
   `name` VARCHAR(50) NOT NULL COMMENT '담당자 성명',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '계정 생성 일시',
-  PRIMARY KEY (`user_id`),
-  KEY `idx_users_role_id` (`role_id`),
-  CONSTRAINT `fk_users_roles` FOREIGN KEY (`role_id`) REFERENCES `ROLES` (`role_id`) ON UPDATE CASCADE
+  PRIMARY KEY (`account_id`),
+  KEY `idx_accounts_role_id` (`role_id`),
+  CONSTRAINT `fk_accounts_roles` FOREIGN KEY (`role_id`) REFERENCES `ROLES` (`role_id`) ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='WPF 관제 시스템 사용자 및 관리자 계정';
+COMMENT='WPF 관제 시스템 로그인 계정 마스터';
 
 -- =============================================================================
 -- [TableGroup: 관리자_정적데이터]
@@ -64,7 +65,7 @@ COMMENT='WPF 관제 시스템 사용자 및 관리자 계정';
 -- =============================================================================
 CREATE TABLE `ORDERS` (
   `job_id` VARCHAR(50) NOT NULL COMMENT '주문 고유 식별자 (예: JOB-025)',
-  `user_id` BIGINT DEFAULT NULL COMMENT '주문 고객 식별자 (FK -> USERS.user_id, 비회원 주문 시 NULL)',
+  `account_id` BIGINT DEFAULT NULL COMMENT '주문 등록/담당 계정 식별자 (FK -> ACCOUNTS.account_id, 미지정 시 NULL)',
   `model_name` VARCHAR(50) NOT NULL COMMENT '생산 대상 로봇 모델명 (예: MODEL_A)',
   `target_head_id` VARCHAR(50) NOT NULL COMMENT '투입 요구 머리 부품 ID (예: H1, H2)',
   `target_body_id` VARCHAR(50) NOT NULL COMMENT '투입 요구 몸통 부품 ID (예: B1)',
@@ -75,14 +76,14 @@ CREATE TABLE `ORDERS` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '주문 생성 시각',
   PRIMARY KEY (`job_id`),
   KEY `idx_orders_created_at` (`created_at`),
-  KEY `idx_orders_user_id` (`user_id`),
-  CONSTRAINT `fk_orders_users` FOREIGN KEY (`user_id`) REFERENCES `USERS` (`user_id`) ON UPDATE CASCADE ON DELETE SET NULL
+  KEY `idx_orders_account_id` (`account_id`),
+  CONSTRAINT `fk_orders_accounts` FOREIGN KEY (`account_id`) REFERENCES `ACCOUNTS` (`account_id`) ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='1단계: 작업 지시 및 주문 마스터 테이블 (상위 MES 시스템 연동)';
 
 -- =============================================================================
 -- [TableGroup: 관리자_정적데이터]
--- 3. PALLETS: 공정 내 순환하는 키팅 파레트 마스터 테이블
+-- 4. PALLETS: 공정 내 순환하는 키팅 파레트 마스터 테이블
 -- =============================================================================
 CREATE TABLE `PALLETS` (
   `pallet_id` VARCHAR(50) NOT NULL COMMENT '파레트 부착 QR 코드 식별자 (예: PALLET-01)',

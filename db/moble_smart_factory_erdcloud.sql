@@ -6,26 +6,26 @@
 
 CREATE TABLE `ROLES` (
   `role_id` INT NOT NULL AUTO_INCREMENT COMMENT '역할 고유 식별자 (PK)',
-  `role_code` VARCHAR(30) NOT NULL UNIQUE COMMENT '역할 코드 (SUPER_ADMIN, OPERATOR)',
+  `role_code` VARCHAR(30) NOT NULL UNIQUE COMMENT '역할 코드 (ADMIN, OPERATOR)',
   `role_name` VARCHAR(50) NOT NULL COMMENT '역할 명칭 (최상위 관리자, 운영 관리자)',
   `description` VARCHAR(255) NULL COMMENT '역할 상세 설명',
   PRIMARY KEY (`role_id`)
-) COMMENT='WPF 관제 사용자 권한 마스터';
+) COMMENT='WPF 관제 시스템 권한 마스터';
 
-CREATE TABLE `USERS` (
-  `user_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '사용자 고유 식별자 (PK)',
+CREATE TABLE `ACCOUNTS` (
+  `account_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '계정 고유 식별자 (PK)',
   `role_id` INT NOT NULL DEFAULT 2 COMMENT '부여된 역할 (FK -> ROLES.role_id, 기본값: OPERATOR)',
-  `emp_no` VARCHAR(50) NOT NULL UNIQUE COMMENT '로그인 사번/아이디 (예: admin, op_01)',
+  `login_id` VARCHAR(50) NOT NULL UNIQUE COMMENT '로그인 사번/아이디 (예: admin, op_01)',
   `password_hash` VARCHAR(255) NOT NULL COMMENT '암호화된 비밀번호 (Bcrypt/SHA-256)',
   `name` VARCHAR(50) NOT NULL COMMENT '담당자 성명',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '계정 생성 일시',
-  PRIMARY KEY (`user_id`),
-  CONSTRAINT `FK_ROLES_TO_USERS` FOREIGN KEY (`role_id`) REFERENCES `ROLES` (`role_id`)
-) COMMENT='WPF 관제 시스템 사용자 및 관리자 계정';
+  PRIMARY KEY (`account_id`),
+  CONSTRAINT `FK_ROLES_TO_ACCOUNTS` FOREIGN KEY (`role_id`) REFERENCES `ROLES` (`role_id`)
+) COMMENT='WPF 관제 시스템 로그인 계정 마스터';
 
 CREATE TABLE `ORDERS` (
   `job_id` VARCHAR(50) NOT NULL COMMENT '주문 고유 식별자 (예: JOB-025)',
-  `user_id` BIGINT NULL COMMENT '주문 고객 식별자 (FK -> USERS.user_id, 비회원 주문 시 NULL)',
+  `account_id` BIGINT NULL COMMENT '주문 등록/담당 계정 식별자 (FK -> ACCOUNTS.account_id, 미지정 시 NULL)',
   `model_name` VARCHAR(50) NOT NULL COMMENT '생산 대상 로봇 모델명 (예: MODEL_A)',
   `target_head_id` VARCHAR(50) NOT NULL COMMENT '투입 요구 머리 부품 ID (H1, H2)',
   `target_body_id` VARCHAR(50) NOT NULL COMMENT '투입 요구 몸통 부품 ID (B1)',
@@ -35,7 +35,7 @@ CREATE TABLE `ORDERS` (
   `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING' COMMENT '주문 진행 상태 (PENDING, IN_PROGRESS, COMPLETED, CANCELED)',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '주문 생성 시각',
   PRIMARY KEY (`job_id`),
-  CONSTRAINT `FK_USERS_TO_ORDERS` FOREIGN KEY (`user_id`) REFERENCES `USERS` (`user_id`)
+  CONSTRAINT `FK_ACCOUNTS_TO_ORDERS` FOREIGN KEY (`account_id`) REFERENCES `ACCOUNTS` (`account_id`)
 ) COMMENT='1단계: 작업 지시 및 주문 마스터 테이블';
 
 CREATE TABLE `PALLETS` (
