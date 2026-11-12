@@ -21,34 +21,46 @@ DROP TABLE IF EXISTS `JOB_PALLET_MAPPINGS`;
 DROP TABLE IF EXISTS `PALLETS`;
 DROP TABLE IF EXISTS `ORDERS`;
 DROP TABLE IF EXISTS `USERS`;
+DROP TABLE IF EXISTS `ROLES`;
 
 -- =============================================================================
--- [TableGroup: 사용자_및_회원관리]
--- 1. USERS: 회원 및 관제 관리자 마스터 테이블
+-- [TableGroup: 관제계정_및_권한관리]
+-- 1. ROLES: 권한 및 역할 마스터 테이블 (최상위 / 운영관리자)
+-- =============================================================================
+CREATE TABLE `ROLES` (
+  `role_id` INT NOT NULL AUTO_INCREMENT COMMENT '역할 고유 식별자 (PK)',
+  `role_code` VARCHAR(30) NOT NULL UNIQUE COMMENT '역할 코드 (SUPER_ADMIN, OPERATOR)',
+  `role_name` VARCHAR(50) NOT NULL COMMENT '역할 명칭 (최상위 관리자, 운영 관리자)',
+  `description` VARCHAR(255) DEFAULT NULL COMMENT '역할 상세 설명',
+  PRIMARY KEY (`role_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT='WPF 관제 사용자 권한 마스터';
+
+-- 초기 2대 역할 데이터 등록
+INSERT INTO `ROLES` (`role_id`, `role_code`, `role_name`, `description`) VALUES
+(1, 'SUPER_ADMIN', '최상위 관리자', '전체 시스템 제어, 설비 파라미터 설정, 계정 관리 등 전체 탭 풀 권한'),
+(2, 'OPERATOR', '운영 관리자', '7단계 실시간 공정 모니터링 및 알람 확인 등 현장 운영 관제 권한');
+
+-- =============================================================================
+-- [TableGroup: 관제계정_및_권한관리]
+-- 2. USERS: 관제 시스템 로그인 계정 마스터 테이블
 -- =============================================================================
 CREATE TABLE `USERS` (
-  `user_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '회원 고유 식별자 (PK)',
-  `username` VARCHAR(50) NOT NULL COMMENT '로그인 아이디',
+  `user_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '사용자 고유 식별자 (PK)',
+  `role_id` INT NOT NULL DEFAULT 2 COMMENT '부여된 역할 (FK -> ROLES.role_id, 기본값: OPERATOR)',
+  `emp_no` VARCHAR(50) NOT NULL UNIQUE COMMENT '로그인 사번/아이디 (예: admin, op_01)',
   `password_hash` VARCHAR(255) NOT NULL COMMENT '암호화된 비밀번호 (Bcrypt/SHA-256)',
-  `name` VARCHAR(50) NOT NULL COMMENT '고객/관리자 이름',
-  `email` VARCHAR(100) NOT NULL COMMENT '이메일 주소 (중복 불가)',
-  `phone` VARCHAR(20) NOT NULL COMMENT '전화번호 (010-XXXX-XXXX)',
-  `postal_code` VARCHAR(10) DEFAULT NULL COMMENT '우편번호',
-  `address_main` VARCHAR(255) DEFAULT NULL COMMENT '기본 배송지 주소 (도로명/공장 주소)',
-  `address_detail` VARCHAR(255) DEFAULT NULL COMMENT '상세 주소 (동/호수, 라인 번호 등)',
-  `role` VARCHAR(20) NOT NULL DEFAULT 'CUSTOMER' COMMENT '권한 (CUSTOMER, OPERATOR, ADMIN)',
-  `marketing_opt_in` BOOLEAN NOT NULL DEFAULT FALSE COMMENT '마케팅 정보 수신 동의 여부',
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '가입 시각',
-  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '정보 수정 시각',
+  `name` VARCHAR(50) NOT NULL COMMENT '담당자 성명',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '계정 생성 일시',
   PRIMARY KEY (`user_id`),
-  UNIQUE KEY `uq_users_username` (`username`),
-  UNIQUE KEY `uq_users_email` (`email`)
+  KEY `idx_users_role_id` (`role_id`),
+  CONSTRAINT `fk_users_roles` FOREIGN KEY (`role_id`) REFERENCES `ROLES` (`role_id`) ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='회원 및 관제 관리자 마스터 테이블';
+COMMENT='WPF 관제 시스템 사용자 및 관리자 계정';
 
 -- =============================================================================
 -- [TableGroup: 관리자_정적데이터]
--- 2. ORDERS: 작업 지시 및 주문 마스터 테이블 (상위 MES 시스템 연동)
+-- 3. ORDERS: 작업 지시 및 주문 마스터 테이블 (상위 MES 시스템 연동)
 -- =============================================================================
 CREATE TABLE `ORDERS` (
   `job_id` VARCHAR(50) NOT NULL COMMENT '주문 고유 식별자 (예: JOB-025)',

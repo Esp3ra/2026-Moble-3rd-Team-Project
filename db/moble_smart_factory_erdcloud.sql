@@ -4,22 +4,24 @@
 -- 사용 방법: erdcloud.com 접속 -> [가져오기(Import)] -> [SQL] 선택 후 아래 내용 붙여넣기
 -- =============================================================================
 
+CREATE TABLE `ROLES` (
+  `role_id` INT NOT NULL AUTO_INCREMENT COMMENT '역할 고유 식별자 (PK)',
+  `role_code` VARCHAR(30) NOT NULL UNIQUE COMMENT '역할 코드 (SUPER_ADMIN, OPERATOR)',
+  `role_name` VARCHAR(50) NOT NULL COMMENT '역할 명칭 (최상위 관리자, 운영 관리자)',
+  `description` VARCHAR(255) NULL COMMENT '역할 상세 설명',
+  PRIMARY KEY (`role_id`)
+) COMMENT='WPF 관제 사용자 권한 마스터';
+
 CREATE TABLE `USERS` (
-  `user_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '회원 고유 식별자 (PK)',
-  `username` VARCHAR(50) NOT NULL UNIQUE COMMENT '로그인 아이디',
+  `user_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '사용자 고유 식별자 (PK)',
+  `role_id` INT NOT NULL DEFAULT 2 COMMENT '부여된 역할 (FK -> ROLES.role_id, 기본값: OPERATOR)',
+  `emp_no` VARCHAR(50) NOT NULL UNIQUE COMMENT '로그인 사번/아이디 (예: admin, op_01)',
   `password_hash` VARCHAR(255) NOT NULL COMMENT '암호화된 비밀번호 (Bcrypt/SHA-256)',
-  `name` VARCHAR(50) NOT NULL COMMENT '고객/관리자 이름',
-  `email` VARCHAR(100) NOT NULL UNIQUE COMMENT '이메일 주소 (중복 불가)',
-  `phone` VARCHAR(20) NOT NULL COMMENT '전화번호 (010-XXXX-XXXX)',
-  `postal_code` VARCHAR(10) NULL COMMENT '우편번호',
-  `address_main` VARCHAR(255) NULL COMMENT '기본 배송지 주소 (도로명/공장 주소)',
-  `address_detail` VARCHAR(255) NULL COMMENT '상세 주소 (동/호수, 라인 번호 등)',
-  `role` VARCHAR(20) NOT NULL DEFAULT 'CUSTOMER' COMMENT '권한 (CUSTOMER, OPERATOR, ADMIN)',
-  `marketing_opt_in` BOOLEAN NOT NULL DEFAULT FALSE COMMENT '마케팅 정보 수신 동의 여부',
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '가입 시각',
-  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '정보 수정 시각',
-  PRIMARY KEY (`user_id`)
-) COMMENT='회원 및 관제 관리자 마스터 테이블';
+  `name` VARCHAR(50) NOT NULL COMMENT '담당자 성명',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '계정 생성 일시',
+  PRIMARY KEY (`user_id`),
+  CONSTRAINT `FK_ROLES_TO_USERS` FOREIGN KEY (`role_id`) REFERENCES `ROLES` (`role_id`)
+) COMMENT='WPF 관제 시스템 사용자 및 관리자 계정';
 
 CREATE TABLE `ORDERS` (
   `job_id` VARCHAR(50) NOT NULL COMMENT '주문 고유 식별자 (예: JOB-025)',
