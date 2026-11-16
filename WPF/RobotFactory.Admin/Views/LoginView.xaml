@@ -1,0 +1,19 @@
+<UserControl x:Class="RobotFactory.Admin.Views.LoginView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <Border Style="{StaticResource Card}" Width="850" Height="370" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="40">
+  <Grid>
+   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="40" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+   <StackPanel VerticalAlignment="Center">
+    <TextBlock Text="관리자 로그인" FontSize="32" FontWeight="Bold" Margin="0,0,0,20" />
+    <TextBlock Text="주문·공정·검사를&#10;한 화면에서 관리합니다." FontSize="20" Margin="0,0,0,20" />
+    <TextBlock Text="1차 관리자 / 최상위 관리자&#10;권한 정책 및 서버 인증 연결 예정" Style="{StaticResource MutedText}" />
+   </StackPanel>
+   <StackPanel Grid.Column="2" VerticalAlignment="Center">
+    <TextBlock Text="아이디" Margin="0,0,0,6" /><TextBox IsEnabled="False" AutomationProperties.Name="관리자 아이디 입력 자리" />
+    <TextBlock Text="비밀번호" Margin="0,16,0,6" /><PasswordBox IsEnabled="False" AutomationProperties.Name="관리자 비밀번호 입력 자리" />
+    <Button Content="로그인 · 구현 예정" IsEnabled="False" Margin="0,20,0,12" Style="{StaticResource PrimaryButton}" />
+    <TextBlock Text="화면 구조만 구성한 초안입니다. 계정 정보를 수집하거나 저장하지 않습니다." Style="{StaticResource MutedText}" />
+   </StackPanel>
+  </Grid>
+ </Border>
+</UserControl>

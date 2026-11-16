@@ -1,0 +1,18 @@
+name: WPF skeleton build
+on:
+  push:
+    paths: ['WPF/**', '.github/workflows/wpf-skeleton-build.yml']
+  pull_request:
+    paths: ['WPF/**', '.github/workflows/wpf-skeleton-build.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build WPF/RobotFactory.sln --configuration Release --nologo
