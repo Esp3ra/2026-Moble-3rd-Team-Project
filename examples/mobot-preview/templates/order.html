@@ -1,0 +1,55 @@
+<section class="page-banner order-banner">
+  <div class="shell banner-inner">
+    <div><p class="eyebrow"><span></span> CONFIGURATOR</p><h1>MOBOT 주문 구성</h1><p>헤드 1종과 양팔 모듈을 선택해 장착 모습을 확인하세요.</p></div>
+    <a class="inline-link" href="/#ordering">주문 방법 <span aria-hidden="true">↗</span></a>
+  </div>
+</section>
+<section class="section shell configure">
+  <div class="preview-column">
+    <figure class="assembly-panel">
+      <figcaption><strong>조립 미리보기</strong><span>로봇 정면 기준</span></figcaption>
+      <svg class="assembly-render" id="assembly" viewBox="0 0 420 450" role="img" aria-label="헤드와 양팔이 비어 있는 MOBOT 본체">
+        <ellipse cx="210" cy="430" rx="145" ry="14" fill="url(#ground-shadow)"/>
+        <use href="#chassis"/>
+        <use href="#empty-head" data-mount="head"/>
+        <use href="#empty-arm" data-mount="right"/>
+        <use href="#empty-arm" data-mount="left" transform="translate(420 0) scale(-1 1)"/>
+        <g font-size="12" font-weight="700" fill="#3c536c" text-anchor="middle">
+          <text x="210" y="16">헤드</text>
+          <text x="38" y="158">오른팔</text>
+          <text x="382" y="158">왼팔</text>
+          <path d="M210 19v7M61 155h13l11-9m274 9h-13l-11-9" fill="none" stroke="#3769a2"/>
+        </g>
+      </svg>
+    </figure>
+    <div class="preview-status"><span id="slot-count" role="status">0 / 3 장착</span><button class="reset" type="reset" form="configuration" id="reset-order" disabled>초기화</button></div>
+  </div>
+  <form class="configuration" id="configuration" autocomplete="off">
+    <fieldset class="order-contact">
+      <legend>주문자 정보</legend>
+      <div class="order-contact-fields">
+        <label for="order-company">회사명</label>
+        <input id="order-company" name="company" maxlength="100" required>
+        <label for="order-phone">전화번호</label>
+        <input id="order-phone" name="phone" type="tel" maxlength="40" required>
+        <label for="order-address">주소</label>
+        <textarea id="order-address" name="address" rows="2" maxlength="300" required></textarea>
+      </div>
+    </fieldset>
+    $options
+    $payment
+    <button class="button primary review" type="submit" disabled>주문 정보 확인 <span aria-hidden="true">→</span></button>
+    <p class="order-note">$order_note</p>
+  </form>
+</section>
+<dialog class="summary-dialog" id="summary-dialog" aria-labelledby="summary-title">
+  <div class="dialog-body">
+    <h2 id="summary-title">주문 정보를 확인해 주세요</h2>
+    <dl class="product-spec" id="summary"></dl>
+    $submission_status
+    <form method="dialog">
+      $submit_order
+      <button class="button light-outline dialog-edit" autofocus>$close_label</button>
+    </form>
+  </div>
+</dialog>
