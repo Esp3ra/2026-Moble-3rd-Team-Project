@@ -3,15 +3,14 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:vm="clr-namespace:RobotFactory.Admin.ViewModels"
  xmlns:views="clr-namespace:RobotFactory.Admin.Views"
- Title="ROBOT FACTORY · 주문 관제" Width="1920" Height="1080" WindowState="Maximized"
- ResizeMode="CanResize"
+ Title="ROBOT FACTORY · 주문 관제" Width="1920" Height="1080" WindowState="Maximized" MinWidth="1000" MinHeight="640"
  WindowStartupLocation="CenterScreen" Style="{StaticResource {x:Type Window}}">
  <Window.Resources>
   <DataTemplate DataType="{x:Type vm:DashboardViewModel}"><views:DashboardView /></DataTemplate>
   <DataTemplate DataType="{x:Type vm:LoginViewModel}"><views:LoginView /></DataTemplate>
  </Window.Resources>
  <Grid Margin="12">
- <Viewbox x:Name="LayoutViewport" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
+ <Viewbox Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
   <Grid Width="2000" Height="1056">
    <Grid.RowDefinitions><RowDefinition Height="Auto" MinHeight="64" /><RowDefinition Height="*" /></Grid.RowDefinitions>
    <Border Style="{StaticResource Card}" Margin="0,0,0,10" Padding="12,6">
@@ -19,7 +18,7 @@
      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="370" /></Grid.ColumnDefinitions>
      <StackPanel VerticalAlignment="Center">
       <TextBlock Text="ROBOT FACTORY" FontSize="20" FontWeight="Bold" TextWrapping="NoWrap" />
-      <TextBlock Text="{Binding SessionDisplay}" Style="{StaticResource MutedText}" FontSize="12" TextWrapping="NoWrap" Margin="0,2,0,0" />
+      <TextBlock Text="{Binding SessionDisplay}" Style="{StaticResource MutedText}" FontSize="12" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
      </StackPanel>
      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
       <Button Content="관제 화면" Command="{Binding ShowDashboardCommand}" IsEnabled="{Binding IsLoggedIn}" Margin="0,0,8,0" />

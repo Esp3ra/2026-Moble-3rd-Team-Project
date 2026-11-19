@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Windows.Input;
 using System.Collections.ObjectModel;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Windows.Threading;
@@ -53,10 +54,9 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     public async Task StartAsync()
     {
         Stop();
-        if (!Uri.TryCreate(ServerAddress, UriKind.Absolute, out var server) ||
-            (server.Scheme != "http" && server.Scheme != "https") || !string.IsNullOrEmpty(server.UserInfo))
+        if (!ApiConnection.TryParseAddress(ServerAddress, out var server))
         {
-            ConnectionStatus = "http 또는 https 서버 주소를 입력하세요.";
+            ConnectionStatus = ApiConnection.AddressHint;
             return;
         }
         if (string.IsNullOrWhiteSpace(AdminToken))
@@ -84,7 +84,7 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         polling?.Dispose();
         polling = null;
     }
-    private async Task RefreshAsync()
+    public async Task RefreshAsync()
     {
         if (refreshing || dropping || polling is null || connectedServer is null) return;
         var cancellation = polling.Token;
@@ -95,7 +95,18 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         {
             var orderRequest = api.GetOrdersAsync(connectedServer, connectedToken, cancellation);
             var palletRequest = api.GetPalletsAsync(connectedServer, connectedToken, cancellation);
-            await Task.WhenAll(orderRequest, palletRequest);
+            var requests = Task.WhenAll(orderRequest, palletRequest);
+            try
+            {
+                await requests;
+            }
+            catch when (requests.Exception?.InnerExceptions.Any(error =>
+                error is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized }) == true)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                SessionExpired?.Invoke();
+                return;
+            }
             var orders = (await orderRequest).Where(order => order.FactoryStatus != "CANCELED").ToArray();
             var pallets = await palletRequest;
             cancellation.ThrowIfCancellationRequested();
@@ -126,7 +137,6 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
             ConnectionStatus = exception is OperationCanceledException
                 ? "응답 시간 초과 · 마지막 수신 정보 표시 중 · 자동 재시도"
                 : $"조회 실패 · 마지막 수신 정보 표시 중 · {exception.Message}";
-            if (exception is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized }) SessionExpired?.Invoke();
         }
         finally { refreshing = false; Notify(nameof(CanDropOrder)); }
     }
@@ -160,7 +170,7 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
             OrderActionStatus = exception is OperationCanceledException
                 ? "응답 시간 초과 · 주문 상태를 다시 확인하거나 재시도하세요."
                 : exception.Message;
-            if (exception is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized }) SessionExpired?.Invoke();
+            if (exception is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized }) SessionExpired?.Invoke();
         }
         finally { dropping = false; Notify(nameof(CanDropOrder)); }
     }
@@ -205,10 +215,9 @@ public sealed class LoginViewModel : INotifyPropertyChanged
     public async Task LoginAsync(string password)
     {
         if (busy) return;
-        if (!Uri.TryCreate(ServerAddress, UriKind.Absolute, out var server) ||
-            (server.Scheme != "http" && server.Scheme != "https") || !string.IsNullOrEmpty(server.UserInfo))
+        if (!ApiConnection.TryParseAddress(ServerAddress, out var server))
         {
-            Status = "http 또는 https 서버 주소를 입력하세요.";
+            Status = ApiConnection.AddressHint;
             return;
         }
         if (string.IsNullOrWhiteSpace(LoginId) || string.IsNullOrEmpty(password))

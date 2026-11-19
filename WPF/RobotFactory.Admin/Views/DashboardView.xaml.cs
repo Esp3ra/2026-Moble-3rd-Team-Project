@@ -17,12 +17,9 @@ public partial class DashboardView : UserControl
         Unloaded += (_, _) => (DataContext as DashboardViewModel)?.Stop();
     }
 
-    private async void Connect_Click(object sender, RoutedEventArgs e)
+    private async void Refresh_Click(object sender, RoutedEventArgs e)
     {
-        if (DataContext is DashboardViewModel model)
-        {
-            await model.StartAsync();
-        }
+        if (DataContext is DashboardViewModel model) await model.RefreshAsync();
     }
 
     private async void DropOrder_Click(object sender, RoutedEventArgs e)

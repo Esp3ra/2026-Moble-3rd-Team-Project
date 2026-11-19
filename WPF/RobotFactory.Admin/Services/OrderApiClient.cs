@@ -45,7 +45,7 @@ public sealed record FactoryPallet
 
 public sealed class OrderApiClient
 {
-    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private static readonly HttpClient Client = ApiConnection.CreateClient(TimeSpan.FromSeconds(5));
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
@@ -54,7 +54,6 @@ public sealed class OrderApiClient
     private sealed record OrderList([property: JsonPropertyName("orders")] List<FactoryOrder>? Orders);
     private sealed record PalletList([property: JsonPropertyName("pallets")] List<FactoryPallet>? Pallets);
     private sealed record OrderResult([property: JsonPropertyName("order")] FactoryOrder? Order);
-    private sealed record ApiError([property: JsonPropertyName("error")] string? Error);
 
     public async Task<FactoryOrder> CancelOrderAsync(Uri server, string token, string orderId, CancellationToken cancellationToken)
     {
@@ -63,10 +62,8 @@ public sealed class OrderApiClient
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await Client.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadFromJsonAsync<ApiError>(JsonOptions, cancellationToken);
-            throw new HttpRequestException(error?.Error ?? $"주문 드롭 실패 ({(int)response.StatusCode})", null, response.StatusCode);
-        }
+            throw await ApiConnection.CreateErrorAsync(response,
+                $"주문 드롭 실패 ({(int)response.StatusCode})", cancellationToken);
         var result = await response.Content.ReadFromJsonAsync<OrderResult>(JsonOptions, cancellationToken);
         if (result?.Order is not { } order || order.Id != orderId)
             throw new JsonException("주문 드롭 응답을 확인할 수 없습니다.");
@@ -97,7 +94,7 @@ public sealed class OrderApiClient
         if (response.StatusCode == HttpStatusCode.Unauthorized)
             throw new HttpRequestException("로그인이 필요하거나 세션이 만료되었습니다.", null, response.StatusCode);
         if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
-            throw new HttpRequestException("서버의 MOBOT_ADMIN_TOKEN을 설정한 뒤 서버를 다시 시작하세요.");
+            throw new HttpRequestException("주문 관제 API를 사용할 수 없습니다.", null, response.StatusCode);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<T>(JsonOptions, cancellationToken)
             ?? throw new JsonException("서버 응답을 확인할 수 없습니다.");

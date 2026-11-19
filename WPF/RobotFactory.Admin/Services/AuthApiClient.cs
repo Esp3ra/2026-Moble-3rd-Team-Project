@@ -2,7 +2,6 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace RobotFactory.Admin.Services;
 
@@ -20,19 +19,15 @@ public sealed record AdminSession(string Token, long ExpiresAt, AdminAccount Acc
 
 public sealed class AuthApiClient
 {
-    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(8) };
+    private static readonly HttpClient Client = ApiConnection.CreateClient(TimeSpan.FromSeconds(8));
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
-    private sealed record ApiError([property: JsonPropertyName("error")] string? Error);
 
     public async Task<AdminSession> LoginAsync(Uri server, string loginId, string password)
     {
         using var response = await Client.PostAsJsonAsync(new Uri(server, "/api/auth/login"),
             new { login_id = loginId, password });
         if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadFromJsonAsync<ApiError>(JsonOptions);
-            throw new HttpRequestException(error?.Error ?? "로그인에 실패했습니다.", null, response.StatusCode);
-        }
+            throw await ApiConnection.CreateErrorAsync(response, "로그인에 실패했습니다.", CancellationToken.None);
         var session = await response.Content.ReadFromJsonAsync<AdminSession>(JsonOptions);
         if (session is null || string.IsNullOrWhiteSpace(session.Token) || session.Token.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)) || session.Account is null ||
             session.Account.RoleCode is not ("ADMIN" or "OPERATOR") || session.Account.AccountId <= 0 ||
