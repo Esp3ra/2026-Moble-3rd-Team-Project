@@ -37,9 +37,14 @@ void startCycle(const std::string& command) {
   advance(500);
   send(command);
   assert(phase == Phase::PUSH);
+  assert(!beltRunning);
+  if (command == "a 41") {
+    send("START_TRANSFER 41");
+    assert(reported("ERR:TRANSFER_CYCLE"));
+    assert(!reported("PALLET_EJECTED:41"));
+  }
   advance(PUSH_MS);
   advance(REVERSAL_MS);
-  assert(beltRunning);
 }
 
 void reachAssembly() {
@@ -63,6 +68,7 @@ int main(int argc, char** argv) {
 
   if (scenario == "demo") {
     startCycle("demo");
+    assert(beltRunning && !reported("PALLET_EJECTED:41"));
     reachAssembly();
     const auto stoppedPulses = beltPulses;
     send("HEARTBEAT 41");
@@ -74,7 +80,44 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // A start approval cannot be queued before the pallet is ejected.
+  send("START_TRANSFER 41");
+  assert(reported("ERR:TRANSFER_CYCLE"));
+  Serial.output.clear();
   startCycle("a 41");
+  assert(stage == Stage::QR_WAIT && reported("PALLET_EJECTED:41"));
+  assert(!beltRunning && beltPulses == 0);
+  send("q");
+  assert(reported("QR:INFORMATION_ONLY"));
+  send("START_TRANSFER 40");
+  send("START_TRANSFER 42");
+  send("START_TRANSFER 41 extra");
+  send("a 42");
+  send("demo");
+  advance(BELT_LIMIT_MS + 1);
+  assert(stage == Stage::QR_WAIT && !beltRunning && beltPulses == 0);
+  assert(pins[ACT_ENA] == 0 && !reported("TRANSFER_STARTED:41"));
+  if (scenario == "qr-stop" || scenario == "qr-blocked") {
+    if (scenario == "qr-stop") {
+      send("s");
+      assert(reported("STOPPED:TRANSFER_LOCKOUT"));
+    } else {
+      pins[IR1_PIN] = LOW;
+      send("START_TRANSFER 41");
+      assert(reported("ERR:IR_SENSORS_NOT_CLEAR_AT_START"));
+    }
+    pins[IR1_PIN] = HIGH;
+    advance(FILTER_MS);
+    send("START_TRANSFER 41");
+    send("a 42");
+    assert(phase == Phase::LOCKOUT && !beltRunning && beltPulses == 0);
+    return 0;
+  }
+  send("START_TRANSFER 41");
+  assert(stage == Stage::FIRST && beltRunning && reported("TRANSFER_STARTED:41"));
+  assert(!reported("HANDOFF_READY:41"));
+  send("START_TRANSFER 41");
+  assert(beltRunning && stage == Stage::FIRST);
   send("HEARTBEAT 41");
   send("ASSEMBLY_DONE 41");
   assert(reported("ERR:ASSEMBLY_CYCLE"));
@@ -116,7 +159,7 @@ int main(int argc, char** argv) {
       pins[IR2_PIN] = LOW;
       advance(1);
       advance(FILTER_MS);
-      assert(!beltRunning && reported("BELT_STOPPED:IR2_DELAY_DONE"));
+      assert(!beltRunning && reported("BELT_STOPPED:IR2_DELAY_DONE") && reported("HANDOFF_READY:41"));
       advance(RETURN_MS);
       assert(reported("CYCLE_DONE:READY_A"));
       pins[IR1_PIN] = pins[IR2_PIN] = HIGH;
@@ -140,7 +183,7 @@ int main(int argc, char** argv) {
   if (scenario == "no-heartbeat" || scenario == "link-loss") {
     assert(reported("ERR:ASSEMBLY_LINK_TIMEOUT"));
   }
-  assert(phase == Phase::ASSEMBLY_LOCKOUT && !beltRunning && pins[ACT_ENA] == 0);
+  assert(phase == Phase::LOCKOUT && !beltRunning && pins[ACT_ENA] == 0);
   advance(5000);
   send("HEARTBEAT 41");
   send("ASSEMBLY_DONE 41");
@@ -148,6 +191,6 @@ int main(int argc, char** argv) {
   send("demo");
   send("j");
   send("s");
-  assert(phase == Phase::ASSEMBLY_LOCKOUT && !beltRunning && beltPulses == stoppedPulses);
+  assert(phase == Phase::LOCKOUT && !beltRunning && beltPulses == stoppedPulses);
   assert(!reported("ASSEMBLY_RESTARTED:41"));
 }

@@ -22,7 +22,7 @@ jobs:
         run: |
           g++ -std=c++11 -Wall -Wextra -Werror -I firmware/tests \
             firmware/tests/pallet_transfer_test.cpp -o "$RUNNER_TEMP/pallet-transfer-test"
-          for scenario in demo no-heartbeat link-loss completion ir2-blocked operator-stop; do
+          for scenario in demo no-heartbeat link-loss completion ir2-blocked operator-stop qr-stop qr-blocked; do
             "$RUNNER_TEMP/pallet-transfer-test" "$scenario"
           done
       - name: Install Arduino CLI 1.5.1
