@@ -20,7 +20,10 @@
    <Grid><Grid.RowDefinitions><RowDefinition Height="30" /><RowDefinition Height="*" /></Grid.RowDefinitions>
     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="50" /><ColumnDefinition Width="300" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
      <TextBlock Text="서버" FontSize="13" /><TextBlock Grid.Column="1" Text="{Binding ServerAddress}" FontSize="13" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
-     <TextBlock Grid.Column="2" Text="{Binding ConnectionStatus}" FontSize="12" Foreground="{StaticResource Muted}" Margin="10,0" />
+     <StackPanel Grid.Column="2" Margin="10,0">
+      <TextBlock Text="{Binding OrdersStatus, StringFormat='주문 · {0}'}" ToolTip="{Binding OrdersStatus}" FontSize="11" Foreground="{StaticResource Muted}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+      <TextBlock Text="{Binding PalletsStatus, StringFormat='팔레트 · {0}'}" ToolTip="{Binding PalletsStatus}" FontSize="11" Foreground="{StaticResource Muted}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+     </StackPanel>
      <Button Grid.Column="3" Content="새로고침" Click="Refresh_Click" Margin="10,0,0,0" MinHeight="28" Padding="10,3" FontSize="13" />
     </Grid>
     <ItemsControl Grid.Row="1" ItemsSource="{Binding ProcessSteps}">

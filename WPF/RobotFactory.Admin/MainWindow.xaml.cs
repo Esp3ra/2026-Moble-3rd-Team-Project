@@ -11,6 +11,12 @@ public partial class MainWindow : Window
         DataContext = new MainViewModel();
     }
 
+    protected override void OnClosed(EventArgs e)
+    {
+        (DataContext as MainViewModel)?.Dispose();
+        base.OnClosed(e);
+    }
+
     private async void Logout_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is MainViewModel model) await model.LogoutAsync();

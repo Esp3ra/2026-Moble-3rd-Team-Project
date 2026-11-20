@@ -16,3 +16,4 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - run: dotnet build WPF/RobotFactory.sln --configuration Release --nologo
+      - run: dotnet run --project WPF/RobotFactory.Admin.RegressionTests/RobotFactory.Admin.RegressionTests.csproj --configuration Release

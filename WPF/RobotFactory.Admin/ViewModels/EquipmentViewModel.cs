@@ -35,7 +35,7 @@ public sealed partial class DashboardViewModel
     public string DemoPalletId { get => demoPalletId; set { demoPalletId = value; Notify(); NotifyEquipment(); } }
     public bool PositionReady { get => positionReady; set { positionReady = value; Notify(); NotifyEquipment(); } }
     public bool CanConfigureEquipment => equipmentConnected && Equipment.CanStart && !equipmentBusy;
-    public bool CanStartEquipment => CanConfigureEquipment && PositionReady && SelectedOrder?.FactoryStatus == "PENDING" &&
+    public bool CanStartEquipment => connectionReady && CanConfigureEquipment && PositionReady && SelectedOrder?.FactoryStatus == "PENDING" &&
         Pallets.Any(pallet => pallet.PalletId == DemoPalletId && pallet.CurrentStatus == "READY");
     public bool CanStopEquipment => equipmentConnected && !equipmentBusy && Equipment.Run is { FinishedAt: null };
     public bool CanConfirmEquipment => equipmentConnected && !equipmentBusy && Equipment.CanConfirm;
@@ -208,6 +208,11 @@ public sealed partial class DashboardViewModel
         CameraFrame = null;
         Events.Clear();
         PositionReady = false;
+        DemoPalletId = "";
+        startRequestId = null;
+        requestJob = requestPallet = null;
+        CameraStatus = "로그인 후 영상을 조회합니다.";
+        Notify(nameof(CameraStatus));
         Notify(nameof(CameraFrame));
         NotifyEquipment();
     }

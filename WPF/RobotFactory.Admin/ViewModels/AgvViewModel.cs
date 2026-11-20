@@ -20,7 +20,7 @@ public sealed partial class DashboardViewModel
     public AgvState Agv { get; private set; } = new();
     public IReadOnlyList<AgvDestination> AgvDestinations { get; } = [new(3,"3 · 서울 HUB"),new(4,"4 · 평택 HUB"),new(5,"5 · 수원 HUB"),new(6,"6 · 오류1"),new(7,"7 · 오류2")];
     public int AgvDestinationPoint { get => agvDestinationPoint; set { agvDestinationPoint = value; Notify(); Notify(nameof(CanStartAgv)); } }
-    public bool CanStartAgv => agvConnected && !agvBusy && Agv.CanStart && AgvDestinationPoint is >= 3 and <= 7 && SelectedOrder is not null && Agv.Eligible.Any(item => item.JobId == SelectedOrder.Id);
+    public bool CanStartAgv => connectionReady && agvConnected && !agvBusy && Agv.CanStart && AgvDestinationPoint is >= 3 and <= 7 && SelectedOrder is not null && Agv.Eligible.Any(item => item.JobId == SelectedOrder.Id);
     public bool CanStopAgv => agvConnected && !agvBusy && Agv.CanStop;
     public string AgvSummary => !agvConnected ? "AGV DEMO · 연결 대기" : $"AGV DEMO · {Agv.Task?.State ?? "대기"} · 위치 {Agv.Device.Position}";
     public string AgvDetails => !agvConnected ? "AGV 서버 응답 대기" :
@@ -96,6 +96,8 @@ public sealed partial class DashboardViewModel
     private void ResetAgv()
     {
         Agv = new(); agvConnected = false; agvError = ""; agvRequest = null;
+        agvRequestJob = null;
+        AgvDestinationPoint = 0;
         NotifyAgv();
     }
 }

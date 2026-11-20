@@ -21,13 +21,16 @@ public sealed partial class DashboardViewModel : INotifyPropertyChanged
     private CancellationTokenSource? polling;
     private bool refreshing;
     private bool dropping;
-    private bool connectionReady;
+    private bool ordersReady;
+    private bool palletsReady;
+    private bool connectionReady => ordersReady && palletsReady;
     private int dataRevision;
     private string orderActionStatus = "검사 판정 수신 대기";
     private Uri? connectedServer;
     private string connectedToken = "";
     private FactoryOrder? selectedOrder;
-    private string connectionStatus = "로그인 후 서버에 연결합니다.";
+    private string ordersStatus = "로그인 후 조회합니다.";
+    private string palletsStatus = "로그인 후 조회합니다.";
     public string ServerAddress { get; set; } = Environment.GetEnvironmentVariable("MOBOT_API_URL") ?? "http://127.0.0.1:8000";
     public string AdminToken { get; set; } = "";
     public event Action? SessionExpired;
@@ -37,7 +40,9 @@ public sealed partial class DashboardViewModel : INotifyPropertyChanged
     public string PalletCount => $"순환 팔레트 현황 · {Pallets.Count}기";
     public bool CanDropOrder => SelectedOrder?.FactoryStatus == "PENDING" && connectionReady && !dropping && !(Equipment.Run?.JobId == SelectedOrder.Id && Equipment.Run.FinishedAt is null);
     public string OrderActionStatus { get => orderActionStatus; private set { orderActionStatus = value; Notify(); } }
-    public string ConnectionStatus { get => connectionStatus; private set { connectionStatus = value; Notify(); } }
+    public string OrdersStatus { get => ordersStatus; private set { ordersStatus = value; Notify(); Notify(nameof(ConnectionStatus)); } }
+    public string PalletsStatus { get => palletsStatus; private set { palletsStatus = value; Notify(); Notify(nameof(ConnectionStatus)); } }
+    public string ConnectionStatus => $"주문 · {OrdersStatus} | 팔레트 · {PalletsStatus}";
     public FactoryOrder? SelectedOrder
     {
         get => selectedOrder;
@@ -67,17 +72,17 @@ public sealed partial class DashboardViewModel : INotifyPropertyChanged
         Stop();
         if (!ApiConnection.TryParseAddress(ServerAddress, out var server))
         {
-            ConnectionStatus = ApiConnection.AddressHint;
+            OrdersStatus = PalletsStatus = ApiConnection.AddressHint;
             return;
         }
         if (string.IsNullOrWhiteSpace(AdminToken))
         {
-            ConnectionStatus = "계정으로 로그인해 주세요.";
+            OrdersStatus = PalletsStatus = "계정으로 로그인해 주세요.";
             return;
         }
         if (AdminToken.Contains('\r') || AdminToken.Contains('\n'))
         {
-            ConnectionStatus = "관리자 토큰에서 줄바꿈을 제거하세요.";
+            OrdersStatus = PalletsStatus = "관리자 토큰에서 줄바꿈을 제거하세요.";
             return;
         }
         connectedServer = server;
@@ -86,11 +91,11 @@ public sealed partial class DashboardViewModel : INotifyPropertyChanged
         timer.Start();
         await RefreshAsync();
         await Task.WhenAll(RefreshEquipmentAsync(), RefreshAgvAsync());
-        frameTimer.Start();
+        if (polling is not null) frameTimer.Start();
     }
     public void Stop()
     {
-        connectionReady = false;
+        ordersReady = palletsReady = false;
         Notify(nameof(CanDropOrder));
         timer.Stop();
         frameTimer.Stop();
@@ -102,32 +107,29 @@ public sealed partial class DashboardViewModel : INotifyPropertyChanged
     {
         if (refreshing || dropping || polling is null || connectedServer is null) return;
         var cancellation = polling.Token;
-        var revision = dataRevision;
+        var server = connectedServer;
+        var token = connectedToken;
         refreshing = true;
-        Notify(nameof(CanDropOrder));
+        ordersReady = palletsReady = false;
+        NotifyDataReadiness();
         try
         {
-            var orderRequest = api.GetOrdersAsync(connectedServer, connectedToken, cancellation);
-            var palletRequest = api.GetPalletsAsync(connectedServer, connectedToken, cancellation);
-            var requests = Task.WhenAll(orderRequest, palletRequest);
-            try
-            {
-                await requests;
-            }
-            catch when (requests.Exception?.InnerExceptions.Any(error =>
-                error is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized }) == true)
-            {
-                cancellation.ThrowIfCancellationRequested();
-                SessionExpired?.Invoke();
-                return;
-            }
-            var orders = (await orderRequest).Where(order => order.FactoryStatus != "CANCELED").ToArray();
-            var pallets = await palletRequest;
+            await Task.WhenAll(RefreshOrdersAsync(server, token, cancellation), RefreshPalletsAsync(server, token, cancellation));
+        }
+        finally { refreshing = false; NotifyDataReadiness(); }
+    }
+
+    private async Task RefreshOrdersAsync(Uri server, string token, CancellationToken cancellation)
+    {
+        var revision = dataRevision;
+        try
+        {
             cancellation.ThrowIfCancellationRequested();
-            // A response started before a drop must not restore the canceled order.
+            var orders = (await api.GetOrdersAsync(server, token, cancellation))
+                .Where(order => order.FactoryStatus != "CANCELED").ToArray();
+            cancellation.ThrowIfCancellationRequested();
             if (revision != dataRevision) return;
             var selectedId = SelectedOrder?.Id;
-            // Keep the selected item stable when an unchanged response arrives.
             if (!Orders.SequenceEqual(orders))
             {
                 Orders.Clear();
@@ -135,6 +137,27 @@ public sealed partial class DashboardViewModel : INotifyPropertyChanged
                 SelectedOrder = Orders.FirstOrDefault(order => order.Id == selectedId) ?? Orders.FirstOrDefault();
                 Notify(nameof(OrderCount));
             }
+            ordersReady = true;
+            OrdersStatus = $"{DateTime.Now:HH:mm:ss} 수신 · 최신 {Orders.Count}건";
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or JsonException or IOException)
+        {
+            if (cancellation.IsCancellationRequested) return;
+            ordersReady = false;
+            OrdersStatus = $"조회 실패 · 마지막 수신 {Orders.Count}건 유지 · {exception.Message}";
+            if (exception is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized }) SessionExpired?.Invoke();
+        }
+        finally { NotifyDataReadiness(); }
+    }
+
+    private async Task RefreshPalletsAsync(Uri server, string token, CancellationToken cancellation)
+    {
+        try
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var pallets = await api.GetPalletsAsync(server, token, cancellation);
+            cancellation.ThrowIfCancellationRequested();
             if (!Pallets.SequenceEqual(pallets))
             {
                 var chosenPallet = DemoPalletId;
@@ -144,24 +167,30 @@ public sealed partial class DashboardViewModel : INotifyPropertyChanged
                 DemoPalletId = Pallets.Any(pallet => pallet.PalletId == chosenPallet) ? chosenPallet :
                     Pallets.FirstOrDefault(pallet => pallet.CurrentStatus == "READY")?.PalletId ?? "";
             }
-            NotifyEquipment();
-            ConnectionStatus = $"서버·DB 연결됨 · {DateTime.Now:HH:mm:ss} 갱신 · 3초 간격 · 주문 최신 100건 · 팔레트 {Pallets.Count}기";
-            connectionReady = true;
+            palletsReady = true;
+            PalletsStatus = $"{DateTime.Now:HH:mm:ss} 수신 · {Pallets.Count}기";
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or JsonException or IOException)
         {
-            connectionReady = false;
-            ConnectionStatus = exception is OperationCanceledException
-                ? "응답 시간 초과 · 마지막 수신 정보 표시 중 · 자동 재시도"
-                : $"조회 실패 · 마지막 수신 정보 표시 중 · {exception.Message}";
+            if (cancellation.IsCancellationRequested) return;
+            palletsReady = false;
+            PalletsStatus = $"조회 실패 · 마지막 수신 {Pallets.Count}기 유지 · {exception.Message}";
+            if (exception is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized }) SessionExpired?.Invoke();
         }
-        finally { refreshing = false; Notify(nameof(CanDropOrder)); }
+        finally { NotifyDataReadiness(); }
+    }
+
+    private void NotifyDataReadiness()
+    {
+        Notify(nameof(CanDropOrder));
+        NotifyEquipment();
+        NotifyAgv();
     }
 
     public async Task DropOrderAsync(FactoryOrder order)
     {
-        if (dropping || !connectionReady || order.FactoryStatus != "PENDING" || polling is null || connectedServer is null) return;
+        if (!CanDropOrder || SelectedOrder?.Id != order.Id || polling is null || connectedServer is null) return;
         var cancellation = polling.Token;
         dropping = true;
         dataRevision++;
@@ -206,6 +235,8 @@ public sealed partial class DashboardViewModel : INotifyPropertyChanged
         Notify(nameof(PalletCount));
         ResetEquipment();
         ResetAgv();
+        OrdersStatus = PalletsStatus = "로그인 후 조회합니다.";
+        OrderActionStatus = "로그인이 필요합니다.";
     }
     public event PropertyChangedEventHandler? PropertyChanged;
     private void Notify([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new(name));
@@ -263,11 +294,12 @@ public sealed class LoginViewModel : INotifyPropertyChanged
     }
 }
 
-public sealed class MainViewModel : INotifyPropertyChanged
+public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
     private DashboardViewModel? dashboard;
     private readonly LoginViewModel login = new();
     private readonly AuthApiClient auth = new();
+    private readonly DispatcherTimer sessionTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private AdminSession? session;
     private Uri? server;
     private object currentView;
@@ -280,6 +312,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public MainViewModel()
     {
         currentView = login;
+        sessionTimer.Tick += (_, _) =>
+        {
+            if (session is not null && DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= session.ExpiresAt)
+                EndSession("세션이 만료되었습니다. 다시 로그인하세요.");
+        };
         login.LoggedIn += StartSession;
         ShowDashboardCommand = new NavigationCommand(() => { if (IsLoggedIn && dashboard is not null) CurrentView = dashboard; });
         ShowLoginCommand = new NavigationCommand(() => { if (!IsLoggedIn) CurrentView = login; });
@@ -289,12 +326,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
         session = authenticated;
         server = address;
         dashboard = new DashboardViewModel { ServerAddress = address.ToString(), AdminToken = authenticated.Token };
-        dashboard.SessionExpired += () => EndSession("세션이 만료되었습니다. 다시 로그인하세요.");
+        var currentDashboard = dashboard;
+        dashboard.SessionExpired += () =>
+        {
+            if (ReferenceEquals(dashboard, currentDashboard))
+                EndSession("세션이 만료되었습니다. 다시 로그인하세요.");
+        };
+        sessionTimer.Start();
         CurrentView = dashboard;
         NotifySession();
     }
     private void EndSession(string message)
     {
+        sessionTimer.Stop();
         dashboard?.ClearSession();
         dashboard = null;
         session = null;
@@ -315,6 +359,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (!IsLoggedIn) login.SetStatus("앱에서 로그아웃했습니다. 서버 세션 해제 응답을 받지 못했습니다.");
         }
     }
+    public void Dispose() => EndSession("앱을 종료했습니다.");
+
     private void NotifySession()
     {
         OnPropertyChanged(nameof(IsLoggedIn));
