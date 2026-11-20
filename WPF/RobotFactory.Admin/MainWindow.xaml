@@ -3,26 +3,27 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:vm="clr-namespace:RobotFactory.Admin.ViewModels"
  xmlns:views="clr-namespace:RobotFactory.Admin.Views"
- Title="ROBOT FACTORY · WPF 화면 뼈대" Width="1460" Height="920" MinWidth="1000" MinHeight="640"
+ Title="ROBOT FACTORY · 주문 관제" Width="1920" Height="1080" WindowState="Maximized" MinWidth="1000" MinHeight="640"
  WindowStartupLocation="CenterScreen" Style="{StaticResource {x:Type Window}}">
  <Window.Resources>
   <DataTemplate DataType="{x:Type vm:DashboardViewModel}"><views:DashboardView /></DataTemplate>
   <DataTemplate DataType="{x:Type vm:LoginViewModel}"><views:LoginView /></DataTemplate>
  </Window.Resources>
+ <Grid Margin="12">
  <Viewbox Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
-  <Grid Width="1440" Height="866" Margin="12">
-   <Grid.RowDefinitions><RowDefinition Height="Auto" MinHeight="92" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-   <Border Style="{StaticResource Card}" Margin="0,0,0,10">
+  <Grid Width="2000" Height="1056">
+   <Grid.RowDefinitions><RowDefinition Height="Auto" MinHeight="64" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+   <Border Style="{StaticResource Card}" Margin="0,0,0,10" Padding="12,6">
     <Grid>
      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="370" /></Grid.ColumnDefinitions>
      <StackPanel VerticalAlignment="Center">
-      <TextBlock Text="ROBOT FACTORY" FontSize="22" FontWeight="Bold" TextWrapping="NoWrap" />
-      <TextBlock Text="WPF 화면 뼈대 · 예시 데이터 · 서버 및 장비 미연결" Style="{StaticResource MutedText}" TextWrapping="NoWrap" Margin="0,2,0,0" />
+      <TextBlock Text="ROBOT FACTORY" FontSize="20" FontWeight="Bold" TextWrapping="NoWrap" />
+      <TextBlock Text="{Binding SessionDisplay}" Style="{StaticResource MutedText}" FontSize="12" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
      </StackPanel>
      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-      <Button Content="관제 화면" Command="{Binding ShowDashboardCommand}" Margin="0,0,8,0" />
-      <Button Content="로그인 화면" Command="{Binding ShowLoginCommand}" Margin="0,0,8,0" />
-      <Button Content="로그아웃" IsEnabled="False" ToolTip="계정 인증 및 세션 처리는 후속 구현" />
+      <Button Content="관제 화면" Command="{Binding ShowDashboardCommand}" IsEnabled="{Binding IsLoggedIn}" Margin="0,0,8,0" />
+      <Button Content="로그인 화면" Command="{Binding ShowLoginCommand}" IsEnabled="{Binding IsLoggedOut}" Margin="0,0,8,0" />
+      <Button Content="로그아웃" IsEnabled="{Binding IsLoggedIn}" Click="Logout_Click" />
      </StackPanel>
      <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="20,0,0,0" VerticalAlignment="Center">
       <Button Content="■ 컨베이어 비상정지" IsEnabled="False" Background="#FFF0F2" Foreground="#AB2838"
@@ -34,4 +35,5 @@
    <ContentControl Grid.Row="1" Content="{Binding CurrentView}" />
   </Grid>
  </Viewbox>
+ </Grid>
 </Window>

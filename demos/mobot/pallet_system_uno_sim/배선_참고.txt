@@ -1,0 +1,22 @@
+UNO 모의 로봇팔 작업 시험판 배선
+
+기존 UNO 모터/센서 배선을 유지합니다. Pi를 사용하지 않아도 됩니다.
+D5 → 컨베이어 드라이버 PUL+, GND → PUL-
+D6 → 컨베이어 드라이버 DIR+, GND → DIR-
+벨트 방향 HIGH, 펄스 반주기 80µs 유지
+D9 → L298N ENA(ENA 캡 제거), D7 → IN1, D8 → IN2
+D4 → IR1 수광부 OUT, D2 → IR2 수광부 OUT
+기존 센서 기준 빨강 → 5V, 검정 → GND, 수광부 흰색 → OUT
+새 센서는 실제 정격·출력 방식을 확인한 후 연결합니다. 현재 코드는 5V·LOW 감지, INPUT_PULLUP, 20ms 안정 확인 기준입니다.
+IR 발광부·수광부 모두 전원이 필요하며 렌즈가 정면으로 마주 보게 설치합니다.
+
+UNO는 USB 전원. 모터 외부 전원/배선은 유지합니다. 센서에는 12V를 연결하지 않습니다.
+L298N GND와 액추에이터 전원 음극 공통. 서로 다른 어댑터 + 출력을 묶지 않습니다.
+작업/업로드/최초 USB 연결은 모터 전원을 분리한 상태에서 진행합니다.
+
+업로드: firmware/RobotWorkSimulation/RobotWorkSimulation.ino
+시리얼: 115200 baud, New Line
+READY UNO_SIM_V1 / MANUAL_JOG_MS:1000 / TIMING:0:5500:3000:2000 확인
+IR1: IR:CLEAR/DETECTED / IR2: IR2:CLEAR/DETECTED
+IR1 감지 후 5.5초 → 벨트 3초 정지(로봇 작업 가정) → 재구동 → IR2 감지 후 2초 최종 정지
+웹 시간 설정 메뉴에서 세 시간만 각각 조절할 수 있습니다.
