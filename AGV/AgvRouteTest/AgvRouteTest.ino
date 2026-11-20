@@ -1728,16 +1728,16 @@ esp_err_t queueCommand(httpd_req_t* request, int command) {
 }
 
 
-bool sessionConnected(unsigned long now) {
+bool sessionConnected(unsigned long) {
   portENTER_CRITICAL(&controlLock);
-  const bool connected = controlSession.connected(now);
+  const bool connected = controlSession.connected(millis());
   portEXIT_CRITICAL(&controlLock);
   return connected;
 }
 
-bool controllerPermitted(const char* controller, unsigned long now) {
+bool controllerPermitted(const char* controller, unsigned long) {
   portENTER_CRITICAL(&controlLock);
-  const bool permitted = controlSession.permits(controller, now);
+  const bool permitted = controlSession.permits(controller, millis());
   portEXIT_CRITICAL(&controlLock);
   return permitted;
 }
@@ -1811,9 +1811,11 @@ esp_err_t inspectionRequest(httpd_req_t* request) {
   return queueCommand(request, INSPECTION_COMMAND);
 }
 
-void updateControlWatchdog(unsigned long now) {
+void updateControlWatchdog(unsigned long) {
   portENTER_CRITICAL(&controlLock);
-  const bool stop = controlSession.takeStopRequest(now);
+  // Sample time under the same lock as heartbeat updates. An older loop
+  // timestamp would otherwise underflow after a concurrent newer heartbeat.
+  const bool stop = controlSession.takeStopRequest(millis());
   portEXIT_CRITICAL(&controlLock);
   if (!stop) return;
   portENTER_CRITICAL(&motionLock);
@@ -1980,9 +1982,17 @@ esp_err_t handleControlSocket(httpd_req_t* request) {
 
   const int sender = httpd_req_to_sockfd(request);
   const bool connected = WiFi.status() == WL_CONNECTED;
+  // The payload read may block past expiry. Revalidate at the mutation and
+  // keep timeout handling serialized until the RC command is committed.
+  portENTER_CRITICAL(&controlLock);
+  if (!controlSession.permits(context->controller, millis())) {
+    portEXIT_CRITICAL(&controlLock);
+    return ESP_FAIL;
+  }
   portENTER_CRITICAL(&motionLock);
   if (!rcMode.load() || !connected) {
     portEXIT_CRITICAL(&motionLock);
+    portEXIT_CRITICAL(&controlLock);
     httpd_ws_frame_t reply{};
     char inactive[] = "inactive";
     reply.type = HTTPD_WS_TYPE_TEXT;
@@ -1992,6 +2002,7 @@ esp_err_t handleControlSocket(httpd_req_t* request) {
   }
   if (pendingCommand.load() != 0 || rcStopPending || forkMoving.load()) {
     portEXIT_CRITICAL(&motionLock);
+    portEXIT_CRITICAL(&controlLock);
     return ESP_OK;
   }
   const unsigned long now = millis();
@@ -2019,6 +2030,7 @@ esp_err_t handleControlSocket(httpd_req_t* request) {
       break;
   }
   portEXIT_CRITICAL(&motionLock);
+  portEXIT_CRITICAL(&controlLock);
   return ESP_OK;
 }
 

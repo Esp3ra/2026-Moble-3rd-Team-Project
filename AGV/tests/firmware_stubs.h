@@ -129,9 +129,12 @@ int httpd_resp_send_err(httpd_req_t* request,int code,const char* data) {
     return httpd_resp_sendstr(request,data);
 }
 int httpd_req_to_sockfd(httpd_req_t* request) {return request->socket;}
+unsigned long frameReadDelay = 0;
 int httpd_ws_recv_frame(httpd_req_t* request,httpd_ws_frame_t* frame,size_t size) {
     frame->len=request->input.size();
     if(size) {
+        ms += frameReadDelay;
+        frameReadDelay = 0;
         if(frame->len>size) return ESP_FAIL;
         std::memcpy(frame->payload,request->input.data(),frame->len);
     }

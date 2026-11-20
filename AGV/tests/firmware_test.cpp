@@ -219,6 +219,20 @@ void websocketTests() {
     loop();
     assert(motorLeft == 0 && motorRight == 0);
     socket.free_ctx(socket.sess_ctx);
+    fixture();
+    rcMode.store(true);
+    socket = request();
+    socket.method = HTTP_GET;
+    socket.query = std::string("key=") + CONTROL_KEY + "&controller=server-a";
+    handleControlSocket(&socket);
+    socket.method = HTTP_POST;
+    socket.input = "F80";
+    frameReadDelay = SERVER_HEARTBEAT_TIMEOUT_MS;
+    assert(handleControlSocket(&socket) == ESP_FAIL);
+    assert(requestedMotion == Motion::Stop);
+    loop();
+    assert(motorLeft == 0 && motorRight == 0);
+    socket.free_ctx(socket.sess_ctx);
     puts("Unauthorized WebSocket handshake rejection, authenticated RC, RC timeout, and expired-session frame rejection passed.");
 }
 
@@ -317,9 +331,16 @@ void sessionEdgeTests() {
     handleCommand(&noKey);
     assert(noKey.status == "401 Unauthorized" && pendingCommand == 0);
     const auto claimedAt = ms;
-    assert(controlSession.connected(claimedAt + 1999));
-    assert(!controlSession.connected(claimedAt + 2000));
-    assert(controlSession.takeStopRequest(claimedAt + 2000));
+    ++ms;
+    assert(controlSession.heartbeat(OWNER, ms));
+    assert(sessionConnected(claimedAt));
+    assert(controllerPermitted(OWNER, claimedAt));
+    updateControlWatchdog(claimedAt);
+    assert(controlSession.connected(ms));
+    const auto renewedAt = ms;
+    assert(controlSession.connected(renewedAt + 1999));
+    assert(!controlSession.connected(renewedAt + 2000));
+    assert(controlSession.takeStopRequest(renewedAt + 2000));
     ControlSession blank("",2000);
     assert(!blank.authenticate(CONTROL_KEY));
     ControlSession session(CONTROL_KEY,2000);
