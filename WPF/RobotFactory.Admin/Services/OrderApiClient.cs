@@ -21,7 +21,7 @@ public sealed record FactoryOrder
     public string FactoryStatus { get; init; } = "";
     public DateTimeOffset? CreatedAt { get; init; }
     public string Parts => $"머리 {TargetHeadId} · 왼팔 {TargetArmLId} · 오른팔 {TargetArmRId}";
-    public string Destination => TargetStation is int station ? $"허브 {station}" : "목적지 미배정";
+    public string Destination => TargetStation switch { 3 => "3 · 서울 HUB", 4 => "4 · 평택 HUB", 5 => "5 · 수원 HUB", 6 => "6 · 오류1", 7 => "7 · 오류2", _ => "목적지 미배정" };
     public string ReceivedTime => CreatedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "접수 시각 없음";
     public string State => FactoryStatus switch
     {

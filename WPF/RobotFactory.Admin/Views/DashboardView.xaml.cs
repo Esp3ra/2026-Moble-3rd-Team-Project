@@ -31,4 +31,38 @@ public partial class DashboardView : UserControl
             "주문 드롭", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
         if (choice == MessageBoxResult.Yes) await model.DropOrderAsync(order);
     }
+
+    private async void StartAgv_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is DashboardViewModel model) await model.StartAgvAsync();
+    }
+    private async void StopAgv_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is DashboardViewModel model) await model.StopAgvAsync();
+    }
+
+    private async void StartEquipment_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is DashboardViewModel model) await model.StartEquipmentAsync();
+    }
+
+    private async void StopEquipment_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is DashboardViewModel model) await model.StopEquipmentAsync();
+    }
+
+    private async void ConfirmEquipment_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is DashboardViewModel model) await model.ConfirmEquipmentAsync();
+    }
+
+    private async void RetryEquipment_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is DashboardViewModel model) await model.RetryEquipmentDatabaseAsync();
+    }
+
+    private async void ApplyEquipmentTimings_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is DashboardViewModel model) await model.ApplyEquipmentTimingsAsync();
+    }
 }

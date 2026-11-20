@@ -10,14 +10,14 @@ using RobotFactory.Admin.Services;
 using System.Runtime.CompilerServices;
 namespace RobotFactory.Admin.ViewModels;
 
-// 장비 영역은 수신 연결 전의 화면 예시 모델이다.
+// 주문·팔레트는 중앙 SQLite, UNO 영역은 인증된 데모 API를 조회한다.
 public sealed record EventPreview(string Time, string Message);
 public sealed record PartPreview(string Part, string Expected, string Observed);
 
-public sealed class DashboardViewModel : INotifyPropertyChanged
+public sealed partial class DashboardViewModel : INotifyPropertyChanged
 {
     private readonly OrderApiClient api = new();
-    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(3) };
+    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private CancellationTokenSource? polling;
     private bool refreshing;
     private bool dropping;
@@ -35,7 +35,7 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     public ObservableCollection<FactoryPallet> Pallets { get; } = [];
     public string OrderCount => $"최근 주문 · {Orders.Count}건";
     public string PalletCount => $"순환 팔레트 현황 · {Pallets.Count}기";
-    public bool CanDropOrder => SelectedOrder?.FactoryStatus == "PENDING" && connectionReady && !dropping;
+    public bool CanDropOrder => SelectedOrder?.FactoryStatus == "PENDING" && connectionReady && !dropping && !(Equipment.Run?.JobId == SelectedOrder.Id && Equipment.Run.FinishedAt is null);
     public string OrderActionStatus { get => orderActionStatus; private set { orderActionStatus = value; Notify(); } }
     public string ConnectionStatus { get => connectionStatus; private set { connectionStatus = value; Notify(); } }
     public FactoryOrder? SelectedOrder
@@ -44,13 +44,24 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         set
         {
             selectedOrder = value;
+            AgvDestinationPoint = value?.TargetStation is >= 3 and <= 7 ? value.TargetStation.Value : 0;
             Notify();
             Notify(nameof(SelectedOrderId));
             Notify(nameof(Parts));
             Notify(nameof(CanDropOrder));
+            NotifyEquipment();
+            NotifyAgv();
         }
     }
-    public DashboardViewModel() => timer.Tick += async (_, _) => await RefreshAsync();
+    public DashboardViewModel()
+    {
+        timer.Tick += async (_, _) =>
+        {
+            await Task.WhenAll(RefreshEquipmentAsync(), RefreshAgvAsync());
+            if (++equipmentTicks % 3 == 0) await RefreshAsync();
+        };
+        InitializeEquipmentPolling();
+    }
     public async Task StartAsync()
     {
         Stop();
@@ -74,12 +85,15 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         polling = new CancellationTokenSource();
         timer.Start();
         await RefreshAsync();
+        await Task.WhenAll(RefreshEquipmentAsync(), RefreshAgvAsync());
+        frameTimer.Start();
     }
     public void Stop()
     {
         connectionReady = false;
         Notify(nameof(CanDropOrder));
         timer.Stop();
+        frameTimer.Stop();
         polling?.Cancel();
         polling?.Dispose();
         polling = null;
@@ -123,10 +137,14 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
             }
             if (!Pallets.SequenceEqual(pallets))
             {
+                var chosenPallet = DemoPalletId;
                 Pallets.Clear();
                 foreach (var pallet in pallets) Pallets.Add(pallet);
                 Notify(nameof(PalletCount));
+                DemoPalletId = Pallets.Any(pallet => pallet.PalletId == chosenPallet) ? chosenPallet :
+                    Pallets.FirstOrDefault(pallet => pallet.CurrentStatus == "READY")?.PalletId ?? "";
             }
+            NotifyEquipment();
             ConnectionStatus = $"서버·DB 연결됨 · {DateTime.Now:HH:mm:ss} 갱신 · 3초 간격 · 주문 최신 100건 · 팔레트 {Pallets.Count}기";
             connectionReady = true;
         }
@@ -186,17 +204,20 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         SelectedOrder = null;
         Notify(nameof(OrderCount));
         Notify(nameof(PalletCount));
+        ResetEquipment();
+        ResetAgv();
     }
     public event PropertyChangedEventHandler? PropertyChanged;
     private void Notify([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new(name));
-    public IReadOnlyList<string> Connections { get; } = ["주문 서버·DB  연결 상태↓", "Pi  미연결", "Arduino  미연결", "myCobot  미연결", "카메라  미연결", "AGV·ESP32  미연결"];
-    public IReadOnlyList<string> ProcessSteps { get; } = ["1  주문·QR", "2  컨베이어 정차", "3  머리·팔 조립", "4  AGV 인계", "5  비전 검사", "6  목적지 이송"];
+    public IReadOnlyList<string> Connections => ["주문 서버·DB  연결 상태↓", "Pi  미연결", equipmentConnected ? "UNO  DEMO 연결" : "UNO  조회 대기", "myCobot  미연결", equipmentConnected ? "카메라  DEMO 영상" : "카메라  영상 대기", agvConnected ? "AGV  DEMO 연결" : "AGV  조회 대기"];
+    public IReadOnlyList<string> ProcessSteps { get; } = ["1  주문 선택", "2  배출·QR", "3  IR1 정차", "4  작업 가정 대기", "5  IR2 정차", "6  배출 확인"];
     public IReadOnlyList<PartPreview> Parts => [new("머리", SelectedOrder?.TargetHeadId ?? "—", "수신 대기"), new("왼팔", SelectedOrder?.TargetArmLId ?? "—", "수신 대기"), new("오른팔", SelectedOrder?.TargetArmRId ?? "—", "수신 대기")];
-    public IReadOnlyList<EventPreview> Events { get; } = [new("10:24:08", "ORD-024 · 검사대 도착 예시"), new("10:23:41", "ORD-024 · AGV 인계 예시"), new("10:22:56", "ORD-023 · 검사 보류 예시")];
     public string SelectedOrderId => SelectedOrder?.Id ?? "주문 선택 대기";
-    public string ExpectedQr => "배정 정보 미연결";
-    public string ScannedQr => "수신 없음";
-    public string QrMatchState => "확인 대기";
+    private bool SelectedRun => SelectedOrder is not null && Equipment.Run?.JobId == SelectedOrder.Id;
+    public string ExpectedQr => SelectedRun ? Equipment.Run!.ExpectedPalletId : "배정 대기";
+    public string ScannedQr => SelectedRun ? Equipment.Run?.PalletId ?? Equipment.Trial.PalletId ?? "인식 대기" : "인식 대기";
+    public string QrMatchState => SelectedRun && Equipment.Run?.MappingId is not null ? "일치 · DB 연결" : "확인 대기";
+
 }
 public sealed class LoginViewModel : INotifyPropertyChanged
 {
