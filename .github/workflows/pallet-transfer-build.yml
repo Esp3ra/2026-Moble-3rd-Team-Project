@@ -17,6 +17,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Test firmware state transitions without hardware
+        shell: bash
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror -I firmware/tests \
+            firmware/tests/pallet_transfer_test.cpp -o "$RUNNER_TEMP/pallet-transfer-test"
+          for scenario in demo no-heartbeat link-loss completion ir2-blocked operator-stop; do
+            "$RUNNER_TEMP/pallet-transfer-test" "$scenario"
+          done
       - name: Install Arduino CLI 1.5.1
         shell: bash
         run: |
