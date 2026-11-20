@@ -1,177 +1,133 @@
 /*
-팀원 공유용 서버 연동 구현 프롬프트
+팀원 공유용 AGV 서버 연동 기준
+기준 문서는 Alpha의 docs/HARDWARE_WORKFLOW.md입니다.
 
-이 파일의 경로 이동과 지게 서보 명령을 메인 PC의 중앙 서버에 연결해 주세요.
-목적지 3~7번 중 하나를 받으면 아래 배송 순서를 한 건씩 실행하고,
-최종적으로 2번에서 지게 85도로 다음 명령을 기다리도록 구현해 주세요.
-현재 스케치는 구간 이동, 서보 각도 지정, 상태 조회 API를 제공합니다.
-전체 배송 순서와 각 단계의 완료 대기는 중앙 서버에서 관리합니다.
+장치와 각도
+  1번은 컨베이어 끝 인수 위치, 2번은 대기 및 복귀 위치입니다.
+  3번 서울 HUB, 4번 평택 HUB, 5번 수원 HUB, 6번 오류1, 7번 오류2입니다.
+  지게 GPIO23은 인수 준비·대기 85도, 운반 110도, 목적지 하역 60도입니다.
+  후진 진행 방향 기준 왼쪽 GPIO35, 가운데 GPIO34, 오른쪽 GPIO36입니다.
+  암실 정차선은 8번과 9번 사이에 놓는 검은 가로 테이프입니다.
+  전방 센서 6개가 모두 검은색을 읽으면 암실에서 정지합니다.
 
-1. 위치 번호와 지게 각도
+장치 제어키 설정
+  agv_secrets.example.h를 같은 폴더의 agv_secrets.h로 복사합니다.
+  AGV_DEVICE_KEY에 비공개 무작위 제어키를 설정합니다.
+  32~96자의 영문·숫자·하이픈·밑줄을 사용할 수 있습니다.
+  Python의 secrets.token_hex(32)로 생성한 64자 키를 권장합니다.
+  실제 키는 중앙 서버와 승인된 운영자에게 비공개로 전달합니다.
+  agv_secrets.h는 Git에 포함하지 않습니다. 빈 키로는 장비를 제어할 수 없습니다.
+  현재 HTTP 및 WebSocket 제어는 신뢰된 장비 네트워크에서 운영합니다.
 
-  1번은 컨테이너 쪽 팔레트 인수 위치입니다.
-  2번은 AGV의 대기 및 최종 복귀 위치입니다.
-  3번은 서울 HUB, 4번은 평택 HUB, 5번은 수원 HUB입니다.
-  6번은 오류1, 7번은 오류2 구역입니다.
-  3~7번 모두 팔레트를 내려놓을 수 있는 배송 목적지입니다.
+인증 및 연결 유지
+  HTTP 명령에는 Authorization 헤더를 Bearer <장치 제어키>로 설정합니다.
+  제어기마다 고유한 X-AGV-Controller 값을 사용합니다.
+  제어기 ID는 영문·숫자·하이픈·밑줄로 된 최대 48자 문자열입니다.
+  POST /control/session으로 사용 가능한 제어 세션을 먼저 확보합니다.
+  이후 같은 제어기가 POST /heartbeat를 500ms 간격으로 보냅니다.
+  2초 동안 유효한 하트비트가 없으면 모터를 멈추고 서보 이동을 중지합니다.
+  서보는 중지 시점의 출력 각도를 유지합니다. 대기 명령은 취소합니다.
+  다른 제어기의 요청과 일반 상태 조회는 하트비트를 갱신하지 않습니다.
+  연결이 복구되어도 이동을 자동 재실행하지 않습니다.
+  서버는 위치·지게 각도·작업 단계를 대조한 뒤 세션과 작업을 재개합니다.
+  이동 중 위치가 불명확해지면 실제 위치를 확인한 뒤 /position으로 설정합니다.
+  브라우저 제어 화면에도 제어키를 입력하고 제어 연결을 눌러야 합니다.
+  브라우저는 자기 제어 세션의 하트비트만 보냅니다.
+  수동 RC는 WebSocket 연결 시에도 키와 제어기 ID를 확인합니다.
+  수동 조작 유지 신호의 400ms 시간초과 정지도 함께 적용됩니다.
 
-  지게 서보는 GPIO23에 연결되어 있습니다.
-  85도는 컨테이너에서 팔레트를 받기 위한 각도이자 2번 대기 각도입니다.
-  110도는 1번에서 팔레트를 들어 올려 운반하는 각도입니다.
-  60도는 3~7번 목적지에서 팔레트를 내려놓는 각도입니다.
-  목적지 하역에는 /servo?angle=60을 사용합니다.
-  /servo?position=lower의 현재 설정값은 85도입니다.
+정상 배송 한 건의 서버 호출 순서
+  초기에는 AGV를 실제 2번에 두고 지게를 1번 방향으로 향하게 놓습니다.
+  제어 세션 확보 후 자동 모드 선택, 최초 위치 설정, 지게 85도를 확인합니다.
+  작업 중인 주문과 팔레트 회차는 중앙 서버에서 유지합니다.
 
-2. 서울 HUB 3번 배송의 전체 동작
+  1. POST /go?point=1
+     2번에서 지게 85도를 유지하며 1번으로 전진하고 도착을 기다립니다.
+  2. POST /servo?angle=110
+     팔레트를 들어 올리고 서보 동작 완료를 기다립니다.
+  3. POST /go?point=2
+     지게 110도를 유지하며 2번까지 후진하고 도착을 기다립니다.
+     적재 후 2번 경유에서는 지게 110도를 유지합니다.
+  4. POST /inspection
+     2번에서 전진해 8번을 돈 뒤 암실 정차선에서 멈춥니다.
+     /status의 state가 inspecting이 될 때까지 기다립니다.
+     이 상태의 position은 0이며 암실 대기를 의미합니다.
+  5. 메인 PC의 카메라 3으로 QR과 완성품을 검사합니다.
+     검사 결과를 DB에 저장한 후 서버가 목적지를 결정합니다.
+     부품 누락이 확인되면 6번이 우선입니다.
+     누락이 확인되지 않은 오부품·QR 불일치·미인식·가림 판정 불가는 7번입니다.
+     정상이면 소비자가 주문한 3·4·5번 HUB를 선택합니다.
+     오류 제품도 서버 판정 후 해당 오류 구역으로 이송합니다.
+  6. POST /go?point=N
+     N은 검사 결과에 따라 정한 3~7번입니다.
+     암실에서 출발해 9번 분기부터 기존 경로로 전진하고 도착을 기다립니다.
+  7. POST /servo?angle=60
+     목적지에 하역하고 서보 동작 완료를 기다립니다.
+  8. POST /go?point=2
+     후진 복귀합니다. 암실 가로선을 먼저 통과한 뒤 실제 8번 T자를 감지합니다.
+  9. POST /servo?angle=85
+     최종 2번 정차와 지게 85도 복귀를 확인하고 이송 사이클을 종료합니다.
+     다음 대기 주문은 서버가 지정합니다.
 
-  시작 상태
-    AGV가 실제 2번에 있고 지게가 1번 컨테이너 방향을 향합니다.
-    지게는 85도이고 주행과 서보 동작이 모두 끝난 상태로 주문을 기다립니다.
+완료 확인
+  GET /status에는 Authorization 헤더가 필요합니다.
+  HTTP 202는 명령 접수이며, 이동 완료는 state=arrived 및 position=N으로 확인합니다.
+  서보 완료는 fork_moving=false 및 servo_angle=요청 각도로 확인합니다.
+  servo_angle은 출력 설정 각도이며 실제 물체 감지 값은 아닙니다.
+  암실 대기는 state=inspecting입니다. 이때 /go는 3~7번 목적지를 받습니다.
+  control_connected는 현재 제어 세션의 유효 여부입니다.
+  control_lost는 제어 연결 만료로 동작이 중지된 상태입니다.
+  stopped·wifi_lost·line_lost·timeout·control_lost는 서버가 상태를 확인해 복구합니다.
+  409 응답이면 현재 상태와 제어기 소유권을 확인합니다.
+  응답이 불명확한 이동·인수·하역 명령은 상태 조회 후 처리해 중복 실행을 막습니다.
+  servo_angle=-1은 서보 PWM 오류입니다.
 
-  단계 1
-    서버가 서울 HUB 배송 주문을 받으면 /go?point=1을 호출합니다.
-    AGV는 지게 85도를 유지하며 2번에서 1번까지 전진합니다.
-    서버는 1번 도착을 확인한 뒤 다음 단계로 진행합니다.
+API
+  POST /control/session      제어 세션 확보
+  POST /heartbeat            현재 제어기의 연결 유지
+  POST /mode?value=auto       자동 모드
+  POST /mode?value=rc         수동 모드
+  POST /position?point=N     실제 위치 확인 후 위치 설정
+  POST /go?point=N           구간 이동 또는 암실에서 판정 목적지로 재출발
+  POST /inspection           2번에서 암실 검사 정차선으로 이동
+  POST /servo?angle=N        정지 중 지게 0~180도 지정
+  POST /rc/servo?angle=N     수동 모드 정지 중 지게 각도 지정
+  POST /reverse-test         후진 라인트레이싱 테스트
+  POST /stop                 인증된 운영자의 정지 명령
+  GET  /status               인증 후 상태 조회
 
-  단계 2
-    /servo?angle=110을 호출해 컨테이너 쪽 팔레트를 들어 올립니다.
-    서버는 서보가 110도에 도달하고 동작을 마칠 때까지 기다립니다.
+  POST 명령은 유효한 제어 세션이 필요합니다.
+  /stop은 인증된 키로 세션 소유권과 관계없이 정지를 요청할 수 있습니다.
+  /servo?position=lower의 기본 각도는 85도입니다.
+  목적지 하역은 /servo?angle=60을 사용합니다.
 
-  단계 3
-    /go?point=2를 호출합니다.
-    AGV는 팔레트를 든 110도를 유지하며 1번에서 2번까지 후진합니다.
-    서버는 2번 도착을 확인합니다.
-
-  단계 4
-    /go?point=3을 호출합니다.
-    AGV는 110도를 유지하며 2번에서 3번 서울 HUB까지 전진합니다.
-    서버는 3번 도착을 확인합니다.
-    적재 후 중간 경유지인 2번에서는 운반 각도 110도를 유지합니다.
-
-  단계 5
-    /servo?angle=60을 호출해 서울 HUB에 팔레트를 내려놓습니다.
-    서버는 서보가 60도에 도달하고 동작을 마칠 때까지 기다립니다.
-
-  단계 6
-    /go?point=2를 호출합니다.
-    AGV는 지게 60도를 유지하며 3번에서 2번까지 후진으로 복귀합니다.
-    서버는 2번 도착을 확인합니다.
-
-  단계 7
-    /servo?angle=85를 호출해 다음 인수를 위한 대기 각도로 복귀합니다.
-    position이 2, servo_angle이 85, fork_moving이 false이고
-    주행이 끝난 상태이면 이번 배송을 완료 처리합니다.
-    이때 AGV는 2번에서 다음 명령을 기다립니다.
-
-  전체 순서
-    2번 대기 85도
-    -> 1번으로 전진
-    -> 110도로 팔레트 들기
-    -> 2번으로 후진
-    -> 3번 서울 HUB로 전진
-    -> 60도로 하역
-    -> 2번으로 후진
-    -> 85도로 복귀하고 다음 명령 대기
-
-  평택, 수원, 오류1, 오류2 배송도 단계 4의 목적지를 각각 4, 5, 6, 7로
-  바꿔 같은 순서로 실행합니다. 모든 목적지의 하역 각도는 60도입니다.
-
-3. 메인 서버와 ESP32의 연결
-
-  ESP32는 기존 Wi-Fi에 접속하는 STA 모드로 동작합니다.
-  메인 PC 서버가 ESP32의 HTTP API를 호출해 명령을 보냅니다.
-  ESP32 주소는 시리얼 모니터의 AGV route test 출력으로 확인합니다.
-  아래 경로 앞에 http://AGV_IP를 붙여 요청합니다.
-  모든 POST 요청에는 X-AGV-Control 헤더 값 1을 넣어야 합니다.
-  파라미터는 현재 API와 동일하게 URL 쿼리 문자열로 전달합니다.
-
-  GET /status
-    현재 주행 상태, 위치, 서보 동작 상태를 JSON으로 조회합니다.
-
-  POST /mode?value=auto
-    자동 경로 모드를 선택합니다.
-    서버는 /status의 mode가 auto인지 확인합니다.
-
-  POST /position?point=2
-    AGV를 실제 2번에 배치한 후 최초 위치를 설정할 때 사용합니다.
-    이 명령은 프로그램의 현재 위치 값을 지정합니다.
-    정상 배송 중 위치 갱신은 도착 상태를 통해 처리합니다.
-
-  POST /go?point=N
-    현재 위치에서 N번까지 이동합니다.
-    배송 주문 한 건은 위 단계에 맞춰 여러 번의 이동 요청으로 진행합니다.
-
-  POST /servo?angle=85
-    2번 대기 또는 컨테이너 인수를 위한 각도로 이동합니다.
-
-  POST /servo?angle=110
-    1번에서 팔레트를 들어 올립니다.
-
-  POST /servo?angle=60
-    3~7번 목적지에서 팔레트를 내려놓습니다.
-
-  POST /stop
-    현재 주행 또는 서보 동작을 중지합니다.
-
-4. 명령 완료를 확인하는 방법
-
-  HTTP 202 Accepted는 명령이 대기열에 접수되었다는 응답입니다.
-  서버는 /status를 약 100~200ms 간격으로 조회해 각 동작 완료를 확인합니다.
-
-  이동 완료
-    state가 arrived이고 position이 방금 요청한 목적지 번호여야 합니다.
-    예를 들어 /go?point=3 이후에는 state가 arrived, position이 3일 때
-    서울 HUB 도착으로 판단합니다.
-
-  서보 완료
-    fork_moving이 false이고 servo_angle이 방금 요청한 각도여야 합니다.
-    예를 들어 /servo?angle=110 이후에는 servo_angle이 110이고
-    fork_moving이 false일 때 팔레트 들기 동작 완료로 판단합니다.
-    servo_angle은 ESP32가 출력한 설정 각도입니다.
-    현재 서보 이동 시간은 FORK_MOVE_MS의 1600ms이고 부드럽게 움직입니다.
-
-  다음 주문 대기
-    position이 2, servo_angle이 85, fork_moving이 false이고
-    state가 ready 또는 arrived이면 다음 주문을 받을 수 있습니다.
-    최종 복귀 후 서보를 85도로 바꿔도 state는 arrived로 유지될 수 있습니다.
-
-  서버는 이동 완료 후 서보를 움직이고, 서보 완료 후 다음 이동을 보냅니다.
-  HTTP 409 응답이면 /status로 진행 중인 동작을 확인하고 현재 단계를 유지합니다.
-  통신 응답이 불명확하면 상태를 먼저 조회해 같은 이동의 중복 발행을 방지합니다.
-  stopped, wifi_lost, line_lost, timeout 상태 또는 servo_angle이 -1이면
-  작업을 오류 상태로 기록하고 관리자에게 현재 단계를 표시합니다.
-
-5. 기존 구동 코드에서 재사용할 부분
-
-  /go의 startTrip(), makeRoute(), updateTrip()이 지도 경로와 이동을 처리합니다.
-  /servo의 startForkMove(), updateForkMove()가 지게 각도를 부드럽게 변경합니다.
-  /status의 showStatus()가 서버에서 확인할 현재 상태를 제공합니다.
-
-  전진 이동은 전방 센서를 사용합니다.
-  후진 진행 방향 기준 왼쪽 센서는 GPIO35, 가운데는 GPIO34,
-  오른쪽 센서는 GPIO36입니다. 코드의 핀 이름은 차체 전진 방향 기준입니다.
-  후진은 가운데 센서로 복귀하도록 보정하며 현재 보정 속도는 70과 85입니다.
-  일반 후진 보정은 5ms 보정과 5ms 직선 후진을 번갈아 적용합니다.
-  지도상 코너의 좌우 회전은 기존 pivot()과 회전 완료 판정을 사용합니다.
-  2번 정차선은 출발선 및 경유 분기를 벗어난 후 후방 세 센서의 첫 완전
-  검은색 감지에서 정지합니다.
-
-  서버 연동에는 현재 검증된 핀 배선, 모터 방향, 경로표, 센서 판정,
-  교차로 중복 감지 방지, 후진 보정, 정차 처리, 수동 RC를 재사용해 주세요.
-  초기 위치 설정 -> 배송 목적지 선택 -> 각 단계 명령과 완료 확인
-  -> 최종 2번 및 85도 복귀 -> 다음 명령 대기의 흐름으로 연결해 주세요.
+  AGV/agv_client.py는 중앙 서버에서 사용할 표준 라이브러리 기반 클라이언트입니다.
+  연결 유지 전송은 별도 스레드에서 수행해 영상 처리 중에도 이어집니다.
+  실제 서버·WPF·DB와의 연동 및 적재 상태 실차 검증은 별도로 수행합니다.
 */
+
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <atomic>
 #include <esp_http_server.h>
 #include <esp_random.h>
+#include "ControlSession.h"
+#if __has_include("agv_secrets.h")
+#include "agv_secrets.h"
+#endif
+#ifndef AGV_DEVICE_KEY
+#define AGV_DEVICE_KEY ""
+#endif
 
 constexpr char WIFI_SSID[] = "YOUR_WIFI_SSID";
 constexpr char WIFI_PASSWORD[] = "YOUR_WIFI_PASSWORD";
 
 constexpr int MOTOR_RX = 16;
+constexpr char CONTROL_KEY[] = AGV_DEVICE_KEY;
+constexpr unsigned long SERVER_HEARTBEAT_TIMEOUT_MS = 2000;
+portMUX_TYPE controlLock = portMUX_INITIALIZER_UNLOCKED;
+ControlSession controlSession(CONTROL_KEY, SERVER_HEARTBEAT_TIMEOUT_MS);
 constexpr int MOTOR_TX = 17;
 // 핀 이름의 좌우는 차체 전진 방향 기준이다.
 constexpr uint8_t REAR_RIGHT_PIN = 35;
@@ -272,7 +228,7 @@ constexpr Node NEIGHBORS[NODE_COUNT][4] = {
 
 enum class State : uint8_t {
   Unknown, Ready, Moving, Arrived, Stopped, WifiLost, LineLost, TimedOut,
-  ReverseTesting,
+  ReverseTesting, ControlLost, Inspecting,
 };
 enum class Phase : uint8_t { Follow, Center, Turn, Cross, ChangeDirection, ExitTurn };
 enum class WebCommand : uint8_t { SetPosition, Go, Stop, Servo, ReverseTest, Mode, RcServo };
@@ -284,6 +240,7 @@ constexpr int FORK_LIFT_COMMAND = 32;
 constexpr int REVERSE_TEST_COMMAND = 41;
 constexpr int AUTO_MODE_COMMAND = 42;
 constexpr int RC_MODE_COMMAND = 43;
+constexpr int INSPECTION_COMMAND = 44;
 constexpr int FORK_ANGLE_COMMAND_BASE = 100;
 constexpr int RC_FORK_ANGLE_COMMAND_BASE = 400;
 WebCommand modeRequest = WebCommand::Mode;
@@ -311,6 +268,11 @@ unsigned long lastCommandAt = 0;
 int controllerSocket = -1;
 char controlPath[26];
 std::atomic<bool> rcMode{false};
+bool inspectionTrip = false;
+bool inspectionArmed = false;
+uint8_t inspectionClearReads = 0;
+bool returnInspectionBarSeen = false;
+bool returnInspectionBarPassed = false;
 
 
 // 상태, 현재 위치, 목적지를 한 번에 게시한다.
@@ -341,7 +303,7 @@ struct Sample {
 
 const char* const STATE_NAMES[] = {
   "unknown", "ready", "moving", "arrived", "stopped",
-  "wifi_lost", "line_lost", "timeout", "reverse_testing",
+  "wifi_lost", "line_lost", "timeout", "reverse_testing", "control_lost", "inspecting",
 };
 const char* const PHASE_NAMES[] = {"follow", "center", "turn", "cross", "change_direction", "exit_turn"};
 State state = State::Unknown;
@@ -370,6 +332,96 @@ bool reversing = false;
 int motorLeft = 101;
 int motorRight = 101;
 unsigned long motorSentAt = 0;
+
+const char CONTROL_SCRIPT[] = R"JS(
+(() => {
+  const storageKey = 'agv-device-key';
+  let key = sessionStorage.getItem(storageKey) || '';
+  let controller = sessionStorage.getItem('agv-controller-id');
+  if (!controller) {
+    controller = 'browser-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    sessionStorage.setItem('agv-controller-id', controller);
+  }
+  let timer = null;
+  let resolveReady;
+  const ready = new Promise(resolve => { resolveReady = resolve; });
+  const form = document.createElement('form');
+  const label = document.createElement('label');
+  label.textContent = '장치 제어키 ';
+  const input = document.createElement('input');
+  input.type = 'password';
+  input.autocomplete = 'off';
+  input.required = true;
+  input.value = key;
+  label.append(input);
+  const button = document.createElement('button');
+  button.type = 'submit';
+  button.textContent = '제어 연결';
+  const message = document.createElement('p');
+  message.setAttribute('role', 'status');
+  message.textContent = '승인된 장치 제어키로 연결하세요.';
+  form.append(label, button, message);
+  document.querySelector('main').prepend(form);
+  const headers = () => ({
+    'Authorization': 'Bearer ' + key,
+    'X-AGV-Controller': controller,
+    'X-AGV-Control': '1'
+  });
+  let heartbeatBusy = false;
+  async function heartbeat() {
+    if (heartbeatBusy) return;
+    heartbeatBusy = true;
+    try {
+      const response = await fetch('/heartbeat', {
+        method: 'POST', headers: headers(), signal: AbortSignal.timeout(900)
+      });
+      if (!response.ok) {
+        clearInterval(timer);
+        timer = null;
+        message.textContent = '제어 연결이 만료되었습니다. 상태를 확인하고 다시 연결하세요.';
+      }
+    } catch {
+      message.textContent = '제어 신호 전송 실패 · 통신 시간초과 시 장치가 정지합니다.';
+    } finally {
+      heartbeatBusy = false;
+    }
+  }
+  async function connect(event) {
+    event?.preventDefault();
+    clearInterval(timer);
+    key = input.value.trim();
+    button.disabled = true;
+    try {
+      const response = await fetch('/control/session', {
+        method: 'POST', headers: headers(), signal: AbortSignal.timeout(1500)
+      });
+      if (!response.ok) throw new Error(await response.text());
+      sessionStorage.setItem(storageKey, key);
+      message.textContent = '제어 연결됨 · 연결 유지 신호 전송 중';
+      timer = setInterval(heartbeat, 500);
+      resolveReady();
+    } catch (error) {
+      message.textContent = '제어 연결 실패 · 키, 다른 제어기 사용 여부와 장치 정지 상태를 확인하세요.';
+    } finally {
+      button.disabled = false;
+    }
+  }
+  form.addEventListener('submit', connect);
+  window.agvControl = {
+    ready,
+    async fetch(path, options = {}) {
+      await ready;
+      return fetch(path, {...options, headers: {...options.headers, ...headers()}});
+    },
+    socketUrl(path) {
+      return 'ws://' + location.host + path +
+        '?key=' + encodeURIComponent(key) + '&controller=' + encodeURIComponent(controller);
+    }
+  };
+  window.addEventListener('pagehide', () => clearInterval(timer));
+  if (key) connect();
+})();
+)JS";
 
 const char CONTROL_PAGE[] = R"HTML(
 <!doctype html>
@@ -424,6 +476,7 @@ const char CONTROL_PAGE[] = R"HTML(
     <button data-point="1" type="button" disabled>1번 인수</button>
     <button data-point="2" type="button" disabled>2번 대기·복귀</button>
   </div>
+  <button id="inspection" type="button" disabled>암실 검사 위치로 이동</button>
   <h2>배송지</h2>
   <div class="track delivery" aria-label="배송지 선택">
     <button data-point="3" type="button" disabled>3번<br>서울 HUB</button>
@@ -459,6 +512,7 @@ const char CONTROL_PAGE[] = R"HTML(
   <p id="fork-output" hidden></p>
   <p id="message" aria-live="polite"></p>
 </main>
+<script src="/control.js"></script>
 <script>
   const buttons = [...document.querySelectorAll('[data-point]')];
   const forkForms = [...document.querySelectorAll('[data-fork]')];
@@ -467,6 +521,7 @@ const char CONTROL_PAGE[] = R"HTML(
   const pointNames = new Map(Array.from(position.options, option => [Number(option.value), option.textContent]));
   const setButton = document.querySelector('#set');
   const reverseTest = document.querySelector('#reverse-test');
+  const inspection = document.querySelector('#inspection');
   const reverseReadings = document.querySelector('#reverse-readings');
   const statusText = document.querySelector('#state');
   const driveStep = document.querySelector('#drive-step');
@@ -478,7 +533,9 @@ const char CONTROL_PAGE[] = R"HTML(
     wifi_lost: 'Wi-Fi 끊김 · 출발 위치를 다시 설정하세요',
     line_lost: '라인 이탈 · 출발 위치를 다시 설정하세요',
     timeout: '이동 시간 초과 · 출발 위치를 다시 설정하세요',
-    reverse_testing: '후진 라인트레이싱 모드'
+    reverse_testing: '후진 라인트레이싱 모드',
+    control_lost: '제어 통신 끊김 · 위치와 공정 상태를 확인하세요',
+    inspecting: '암실 정차 · 검사 결과 대기'
   };
   let waiting = false;
   let commandVersion = 0;
@@ -518,18 +575,20 @@ const char CONTROL_PAGE[] = R"HTML(
     });
     forkOutput.hidden = !servoReady;
     if (servoReady) forkOutput.textContent = '지게 출력 각도 ' + servoAngle + '°';
+    inspection.disabled = waiting || busy || latestStatus?.position !== 2;
     buttons.forEach(button => {
       const target = Number(button.dataset.point);
       const current = latestStatus?.position;
-      button.disabled = !latestStatus?.position || waiting || busy ||
-        target === current || (current >= 3 && target !== 2);
+      const atInspection = latestStatus?.state === 'inspecting';
+      button.disabled = waiting || busy ||
+        (atInspection ? target < 3 : !current || target === current || (current >= 3 && target !== 2));
     });
     statusText.textContent = latestStatus?.mode === 'rc'
       ? '수동 RC 모드 · 자동 운행을 시작하려면 위에서 모드를 전환하세요.'
       : latestStatus
       ? labels[latestStatus.state] +
         (latestStatus.position ? ' · 현재 ' + pointNames.get(latestStatus.position) : '') +
-        (moving ? ' → ' + pointNames.get(latestStatus.target) : '') +
+        (moving ? ' → ' + (latestStatus.inspection_trip ? '암실 검사' : pointNames.get(latestStatus.target)) : '') +
         (latestStatus.fork_moving ? ' · 지게 움직이는 중' : '')
       : 'AGV 연결 끊김';
     driveStep.hidden = !moving || latestStatus.mode !== 'auto' || !latestStatus.next_node;
@@ -558,7 +617,7 @@ const char CONTROL_PAGE[] = R"HTML(
   }
 
   async function readStatus() {
-    const response = await fetch('/status', {cache: 'no-store', signal: AbortSignal.timeout(1500)});
+    const response = await agvControl.fetch('/status', {cache: 'no-store', signal: AbortSignal.timeout(1500)});
     if (!response.ok) throw new Error('상태를 읽지 못했습니다.');
     return response.json();
   }
@@ -580,7 +639,7 @@ const char CONTROL_PAGE[] = R"HTML(
     draw();
     message.textContent = '';
     try {
-      const response = await fetch(path, {
+      const response = await agvControl.fetch(path, {
         method: 'POST',
         headers: {'X-AGV-Control': '1'},
         signal: AbortSignal.timeout(1800)
@@ -600,6 +659,7 @@ const char CONTROL_PAGE[] = R"HTML(
   }
 
   setButton.onclick = () => command('/position?point=' + position.value);
+  inspection.onclick = () => command('/inspection');
   reverseTest.onclick = () => command('/reverse-test');
   buttons.forEach(button => button.onclick = () => command('/go?point=' + button.dataset.point));
   forkForms.forEach(form => form.onsubmit = event => {
@@ -673,6 +733,7 @@ const char RC_PAGE[] = R"HTML(
     <p id="fork-output" hidden></p>
     <p id="servo-message" role="status" hidden></p>
   </main>
+  <script src="/control.js"></script>
   <script>
     const commands = new Map([
       ['ArrowUp', 'F'], ['ArrowDown', 'B'], ['ArrowLeft', 'L'], ['ArrowRight', 'R']
@@ -703,7 +764,7 @@ const char RC_PAGE[] = R"HTML(
     }
 
     async function readStatus() {
-      const response = await fetch('/status', {cache: 'no-store', signal: AbortSignal.timeout(1500)});
+      const response = await agvControl.fetch('/status', {cache: 'no-store', signal: AbortSignal.timeout(1500)});
       if (!response.ok) throw new Error();
       return response.json();
     }
@@ -716,7 +777,7 @@ const char RC_PAGE[] = R"HTML(
       servoMessage.hidden = true;
       updateServoControls();
       try {
-        const response = await fetch('/rc/servo?angle=' + angle, {
+        const response = await agvControl.fetch('/rc/servo?angle=' + angle, {
           method: 'POST', headers: {'X-AGV-Control': '1'}, signal: AbortSignal.timeout(1800)
         });
         if (!response.ok) throw new Error();
@@ -761,7 +822,7 @@ const char RC_PAGE[] = R"HTML(
     }
 
     function connect() {
-      socket = new WebSocket('ws://' + location.host + '{{CONTROL_PATH}}');
+      socket = new WebSocket(agvControl.socketUrl('{{CONTROL_PATH}}'));
       socket.addEventListener('open', () => {
         rcConnected = true;
         status.textContent = '연결됨';
@@ -816,7 +877,7 @@ const char RC_PAGE[] = R"HTML(
     updateSpeed();
     async function enableRc() {
       try {
-        const response = await fetch('/mode?value=rc', {
+        const response = await agvControl.fetch('/mode?value=rc', {
           method: 'POST', headers: {'X-AGV-Control': '1'}, signal: AbortSignal.timeout(1800)
         });
         if (!response.ok) throw new Error();
@@ -843,7 +904,7 @@ const char RC_PAGE[] = R"HTML(
     document.querySelector('#rc-stop').onclick = async () => {
       stopDrive();
       try {
-        const response = await fetch('/stop', {
+        const response = await agvControl.fetch('/stop', {
           method: 'POST', headers: {'X-AGV-Control': '1'}, signal: AbortSignal.timeout(1800)
         });
         if (!response.ok) throw new Error();
@@ -981,7 +1042,8 @@ void publishStatus() {
   uint32_t value = static_cast<uint32_t>(state) |
     (static_cast<uint32_t>(location + 1) << 4) |
     (static_cast<uint32_t>(destination + 1) << 8) |
-    (static_cast<uint32_t>(lastDetected + 1) << 21);
+    (static_cast<uint32_t>(lastDetected + 1) << 21) |
+    (static_cast<uint32_t>(inspectionTrip) << 25);
   if (state == State::Moving) {
     value |= (static_cast<uint32_t>(route[nextIndex] + 1) << 12) |
       (static_cast<uint32_t>(phase) << 16) |
@@ -1150,14 +1212,31 @@ void startTurn(unsigned long now, bool right, int speed) {
 }
 
 void startTrip(Node target, unsigned long now) {
-  if (state == State::Moving || !canTravel(location, target)) return;
-  if (!makeRoute(location, target)) return;
+  const bool fromInspection = state == State::Inspecting;
+  if (state == State::Moving || (fromInspection ? !isDispatchPoint(target) : !canTravel(location, target))) return;
+  if (!makeRoute(fromInspection ? JUNCTION_8 : location, target)) return;
+  inspectionTrip = false;
+  returnInspectionBarSeen = false;
+  returnInspectionBarPassed = false;
 
   Serial.printf("AGV route start: %d -> %d\n", location + 1, target + 1);
   destination = target;
   nextIndex = 1;
-  reversing = location == POINT_1 || isDispatchPoint(location);
+  reversing = !fromInspection && (location == POINT_1 || isDispatchPoint(location));
   location = NO_NODE;
+  startFollowing(now);
+  publish(State::Moving);
+}
+
+void startInspectionTrip(unsigned long now) {
+  if (state == State::Moving || location != POINT_2 || !makeRoute(POINT_2, JUNCTION_9)) return;
+  inspectionTrip = true;
+  inspectionArmed = false;
+  inspectionClearReads = 0;
+  destination = NO_NODE;
+  location = NO_NODE;
+  nextIndex = 1;
+  reversing = false;
   startFollowing(now);
   publish(State::Moving);
 }
@@ -1344,6 +1423,30 @@ void trackReverseSegment(uint8_t rearMask, unsigned long now) {
     }
   }
 
+  // On the return leg, the new inspection bar is encountered before junction 8.
+  // Arm after leaving junction 9, pass one full bar, then detect junction 8.
+  if (node == JUNCTION_8 && destination == POINT_2 &&
+      isDispatchPoint(route[0]) && !returnInspectionBarPassed) {
+    if (!returnInspectionBarSeen) {
+      if (rearMask == 0x07) {
+        returnInspectionBarSeen = true;
+        centeredReads = 0;
+        driveAlongLine(APPROACH_SPEED);
+      } else {
+        driveByRearLine(rearMask);
+      }
+      return;
+    }
+    centeredReads = marker ? 0 : centeredReads + 1;
+    if (centeredReads >= STABLE_READS) {
+      returnInspectionBarPassed = true;
+      centeredReads = matchReads = 0;
+      readyForFeature = true;
+    }
+    driveAlongLine(APPROACH_SPEED);
+    return;
+  }
+
   const bool feature = (rearMask & expected) == expected;
   matchReads = feature ? matchReads + 1 : 0;
   // 정차선은 짧게 지나가도 놓치지 않도록 첫 완전 감지에서 정지한다.
@@ -1434,6 +1537,23 @@ void updateTrip(const Sample& sample, unsigned long now, uint8_t rearMask) {
     return;
   }
   const Node node = route[nextIndex];
+  // The inspection bar is only armed after turn 8 has completed and a fresh
+  // straight line has been observed. Turn-8 tape cannot trigger an inspection.
+  const bool onInspectionApproach = inspectionTrip &&
+    ((node == JUNCTION_8 && phase == Phase::ExitTurn) ||
+     (node == JUNCTION_9 && phase == Phase::Follow));
+  if (onInspectionApproach) {
+    if (!inspectionArmed) {
+      inspectionClearReads = sample.centeredLine() ? inspectionClearReads + 1 : 0;
+      inspectionArmed = inspectionClearReads >= STABLE_READS;
+    }
+    if (inspectionArmed && sample.bits == ((1u << SENSOR_COUNT) - 1)) {
+      drive(0, 0, true);
+      location = destination = NO_NODE;
+      publish(State::Inspecting);
+      return;
+    }
+  }
   const bool forward8To9 = node == JUNCTION_8 && route[nextIndex + 1] == JUNCTION_9;
   const bool junction = node >= JUNCTION_8 && node <= JUNCTION_11;
   const bool approaching9 = node == JUNCTION_9 &&
@@ -1551,6 +1671,16 @@ void updateTrip(const Sample& sample, unsigned long now, uint8_t rearMask) {
   publishStatus();
 }
 
+esp_err_t showControlScript(httpd_req_t* request) {
+  httpd_resp_set_type(request, "application/javascript; charset=utf-8");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+  return httpd_resp_send(request, CONTROL_SCRIPT, HTTPD_RESP_USE_STRLEN);
+}
+
+bool requireControlKey(httpd_req_t* request);
+bool sessionConnected(unsigned long now);
+bool readController(httpd_req_t* request, char* controller, size_t size);
+
 esp_err_t showControlPage(httpd_req_t* request) {
   httpd_resp_set_type(request, "text/html; charset=utf-8");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
@@ -1559,38 +1689,153 @@ esp_err_t showControlPage(httpd_req_t* request) {
 }
 
 esp_err_t showStatus(httpd_req_t* request) {
+  if (!requireControlKey(request)) return ESP_OK;
   const uint32_t value = publicStatus.load();
   const bool moving = (value & 0x0f) == static_cast<uint32_t>(State::Moving);
-  char body[300];
+  char body[512];
   snprintf(body, sizeof(body), "{\"state\":\"%s\",\"position\":%u,\"target\":%u,\"servo_angle\":%d,\"fork_moving\":%s,"
-    "\"reverse_readings\":%d,\"mode\":\"%s\",\"next_node\":%u,\"phase\":\"%s\",\"reversing\":%s,\"turn_right\":%s,\"last_detected\":%u}",
+    "\"reverse_readings\":%d,\"mode\":\"%s\",\"next_node\":%u,\"phase\":\"%s\",\"reversing\":%s,\"turn_right\":%s,\"last_detected\":%u,"
+    "\"control_connected\":%s,\"heartbeat_timeout_ms\":%lu,\"inspection_trip\":%s}",
     STATE_NAMES[value & 0x0f], static_cast<unsigned>((value >> 4) & 0x0f),
     static_cast<unsigned>((value >> 8) & 0x0f), servoAngle.load(), forkMoving.load() ? "true" : "false",
     reverseTestReadings.load(), rcMode.load() ? "rc" : "auto",
     static_cast<unsigned>((value >> 12) & 0x0f), moving ? PHASE_NAMES[(value >> 16) & 0x07] : "idle",
     (value & (1u << 19)) ? "true" : "false", (value & (1u << 20)) ? "true" : "false",
-    static_cast<unsigned>((value >> 21) & 0x0f));
+    static_cast<unsigned>((value >> 21) & 0x0f), sessionConnected(millis()) ? "true" : "false",
+    SERVER_HEARTBEAT_TIMEOUT_MS, (value & (1u << 25)) ? "true" : "false");
   httpd_resp_set_type(request, "application/json; charset=utf-8");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
   return httpd_resp_sendstr(request, body);
 }
 
 esp_err_t queueCommand(httpd_req_t* request, int command) {
-  int empty = 0;
-  if (!pendingCommand.compare_exchange_strong(empty, command)) {
+  char controller[ControlSession::MAX_CONTROLLER_LENGTH + 1];
+  if (!readController(request, controller, sizeof(controller))) {
     httpd_resp_set_status(request, "409 Conflict");
-    return httpd_resp_sendstr(request, "Another command is pending");
+    return httpd_resp_sendstr(request, "Invalid controller ID");
+  }
+  int empty = 0;
+  portENTER_CRITICAL(&controlLock);
+  const bool queued = controlSession.permits(controller, millis()) &&
+    pendingCommand.compare_exchange_strong(empty, command);
+  portEXIT_CRITICAL(&controlLock);
+  if (!queued) {
+    httpd_resp_set_status(request, "409 Conflict");
+    return httpd_resp_sendstr(request, "Controller expired or another command is pending");
   }
   httpd_resp_set_status(request, "202 Accepted");
   return httpd_resp_send(request, nullptr, 0);
 }
 
-esp_err_t handleCommand(httpd_req_t* request) {
-  char header[2];
-  if (httpd_req_get_hdr_value_str(request, "X-AGV-Control", header, sizeof(header)) != ESP_OK ||
-      strcmp(header, "1") != 0) {
-    return httpd_resp_send_err(request, HTTPD_403_FORBIDDEN, "Invalid control request");
+
+bool sessionConnected(unsigned long now) {
+  portENTER_CRITICAL(&controlLock);
+  const bool connected = controlSession.connected(now);
+  portEXIT_CRITICAL(&controlLock);
+  return connected;
+}
+
+bool controllerPermitted(const char* controller, unsigned long now) {
+  portENTER_CRITICAL(&controlLock);
+  const bool permitted = controlSession.permits(controller, now);
+  portEXIT_CRITICAL(&controlLock);
+  return permitted;
+}
+
+bool requireControlKey(httpd_req_t* request) {
+  char authorization[112];
+  if (httpd_req_get_hdr_value_str(request, "Authorization", authorization, sizeof(authorization)) == ESP_OK &&
+      strncmp(authorization, "Bearer ", 7) == 0 && controlSession.authenticate(authorization + 7)) {
+    return true;
   }
+  httpd_resp_set_status(request, "401 Unauthorized");
+  httpd_resp_sendstr(request, "A configured device control key is required");
+  return false;
+}
+
+bool readController(httpd_req_t* request, char* controller, size_t size) {
+  return httpd_req_get_hdr_value_str(request, "X-AGV-Controller", controller, size) == ESP_OK &&
+    ControlSession::validController(controller);
+}
+
+bool requireController(httpd_req_t* request) {
+  char controller[ControlSession::MAX_CONTROLLER_LENGTH + 1];
+  if (readController(request, controller, sizeof(controller)) &&
+      controllerPermitted(controller, millis())) {
+    return true;
+  }
+  httpd_resp_set_status(request, "409 Conflict");
+  httpd_resp_sendstr(request, "Claim a control session and keep its heartbeat alive");
+  return false;
+}
+
+esp_err_t controlSessionRequest(httpd_req_t* request) {
+  if (!requireControlKey(request)) return ESP_OK;
+  char controller[ControlSession::MAX_CONTROLLER_LENGTH + 1];
+  if (!readController(request, controller, sizeof(controller))) {
+    return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid controller ID");
+  }
+  portENTER_CRITICAL(&motionLock);
+  const bool rcStopped = requestedMotion == Motion::Stop;
+  portEXIT_CRITICAL(&motionLock);
+  const bool idle = !isDriving(static_cast<State>(publicStatus.load() & 0x0f)) &&
+    !forkMoving.load() && rcStopped && pendingCommand.load() == 0;
+  portENTER_CRITICAL(&controlLock);
+  const bool claimed = controlSession.claim(controller, millis(), idle);
+  portEXIT_CRITICAL(&controlLock);
+  httpd_resp_set_status(request, claimed ? "204 No Content" : "409 Conflict");
+  return httpd_resp_sendstr(request, claimed ? "" : "Controller busy or timeout stop pending");
+}
+
+esp_err_t heartbeatRequest(httpd_req_t* request) {
+  if (!requireControlKey(request)) return ESP_OK;
+  char controller[ControlSession::MAX_CONTROLLER_LENGTH + 1];
+  if (!readController(request, controller, sizeof(controller))) {
+    return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid controller ID");
+  }
+  portENTER_CRITICAL(&controlLock);
+  const bool refreshed = controlSession.heartbeat(controller, millis());
+  portEXIT_CRITICAL(&controlLock);
+  httpd_resp_set_status(request, refreshed ? "204 No Content" : "409 Conflict");
+  return httpd_resp_sendstr(request, refreshed ? "" : "Control session expired or owned by another controller");
+}
+
+esp_err_t inspectionRequest(httpd_req_t* request) {
+  if (!requireControlKey(request) || !requireController(request)) return ESP_OK;
+  const auto value = publicStatus.load();
+  if (rcMode.load() || isDriving(static_cast<State>(value & 0x0f)) ||
+      forkMoving.load() || ((value >> 4) & 0x0f) != POINT_2 + 1) {
+    httpd_resp_set_status(request, "409 Conflict");
+    return httpd_resp_sendstr(request, "Inspection departure requires automatic mode at point 2");
+  }
+  return queueCommand(request, INSPECTION_COMMAND);
+}
+
+void updateControlWatchdog(unsigned long now) {
+  portENTER_CRITICAL(&controlLock);
+  const bool stop = controlSession.takeStopRequest(now);
+  portEXIT_CRITICAL(&controlLock);
+  if (!stop) return;
+  portENTER_CRITICAL(&motionLock);
+  const bool rcMoving = requestedMotion != Motion::Stop;
+  portEXIT_CRITICAL(&motionLock);
+  const bool active = isDriving(state) || forkMoving.load() || rcMoving;
+  pendingCommand.store(0);
+  forkMoving.store(false);
+  clearRcCommand();
+  drive(0, 0, true);
+  if (active) {
+    inspectionTrip = false;
+    stopTrip(State::ControlLost);
+  }
+}
+
+struct ControlSocketContext {
+  char controller[ControlSession::MAX_CONTROLLER_LENGTH + 1];
+};
+
+esp_err_t handleCommand(httpd_req_t* request) {
+  if (!requireControlKey(request)) return ESP_OK;
 
   const WebCommand action = *static_cast<const WebCommand*>(request->user_ctx);
   if (action == WebCommand::Stop) {
@@ -1599,6 +1844,8 @@ esp_err_t handleCommand(httpd_req_t* request) {
     httpd_resp_set_status(request, "202 Accepted");
     return httpd_resp_send(request, nullptr, 0);
   }
+
+  if (!requireController(request)) return ESP_OK;
 
   if (action == WebCommand::Mode) {
     char query[16];
@@ -1666,7 +1913,8 @@ esp_err_t handleCommand(httpd_req_t* request) {
   }
   const Node current = static_cast<Node>(static_cast<int>((status >> 4) & 0x0f) - 1);
   const Node target = static_cast<Node>(point[0] - '1');
-  if (!canTravel(current, target)) {
+  const bool fromInspection = static_cast<State>(status & 0x0f) == State::Inspecting;
+  if (fromInspection ? !isDispatchPoint(target) : !canTravel(current, target)) {
     httpd_resp_set_status(request, "409 Conflict");
     return httpd_resp_sendstr(request, "Check the start position and destination");
   }
@@ -1686,7 +1934,26 @@ esp_err_t showRcPage(httpd_req_t* request) {
 }
 
 esp_err_t handleControlSocket(httpd_req_t* request) {
-  if (request->method == HTTP_GET) return ESP_OK;
+  if (request->method == HTTP_GET) {
+    char query[224];
+    char key[97];
+    char controller[ControlSession::MAX_CONTROLLER_LENGTH + 1];
+    if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "key", key, sizeof(key)) != ESP_OK ||
+        httpd_query_key_value(query, "controller", controller, sizeof(controller)) != ESP_OK ||
+        !controlSession.authenticate(key) || !controllerPermitted(controller, millis())) {
+      httpd_resp_set_status(request, "403 Forbidden");
+      return httpd_resp_sendstr(request, "Unauthorized control connection");
+    }
+    auto* context = static_cast<ControlSocketContext*>(calloc(1, sizeof(ControlSocketContext)));
+    if (context == nullptr) return ESP_ERR_NO_MEM;
+    strcpy(context->controller, controller);
+    request->sess_ctx = context;
+    request->free_ctx = free;
+    return ESP_OK;
+  }
+  const auto* context = static_cast<const ControlSocketContext*>(request->sess_ctx);
+  if (context == nullptr || !controllerPermitted(context->controller, millis())) return ESP_FAIL;
 
   httpd_ws_frame_t frame{};
   esp_err_t result = httpd_ws_recv_frame(request, &frame, 0);
@@ -1760,12 +2027,16 @@ bool startControlServer() {
     static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.lru_purge_enable = true;
-  config.max_uri_handlers = 11;
+  config.max_uri_handlers = 15;
   httpd_handle_t server = nullptr;
   if (httpd_start(&server, &config) != ESP_OK) return false;
   const httpd_uri_t routes[] = {
     {.uri = "/", .method = HTTP_GET, .handler = showControlPage, .user_ctx = nullptr},
     {.uri = "/status", .method = HTTP_GET, .handler = showStatus, .user_ctx = nullptr},
+    {.uri = "/control/session", .method = HTTP_POST, .handler = controlSessionRequest, .user_ctx = nullptr},
+    {.uri = "/heartbeat", .method = HTTP_POST, .handler = heartbeatRequest, .user_ctx = nullptr},
+    {.uri = "/inspection", .method = HTTP_POST, .handler = inspectionRequest, .user_ctx = nullptr},
+    {.uri = "/control.js", .method = HTTP_GET, .handler = showControlScript, .user_ctx = nullptr},
     {.uri = "/position", .method = HTTP_POST, .handler = handleCommand, .user_ctx = &setPositionRequest},
     {.uri = "/go", .method = HTTP_POST, .handler = handleCommand, .user_ctx = &goRequest},
     {.uri = "/reverse-test", .method = HTTP_POST, .handler = handleCommand, .user_ctx = &reverseTestRequest},
@@ -1800,6 +2071,7 @@ void setup() {
     Serial.println("AGV fork servo PWM setup failed");
   }
   Serial.println("Connecting to 2.4 GHz Wi-Fi...");
+  if (strlen(CONTROL_KEY) < 32) Serial.println("Configure a private device key in agv_secrets.h before controlling the AGV.");
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -1826,6 +2098,9 @@ void loop() {
   }
 
   if (!connected || !serverReady) {
+    portENTER_CRITICAL(&controlLock);
+    controlSession.revoke();
+    portEXIT_CRITICAL(&controlLock);
     pendingCommand.store(0);
     forkMoving.store(false);
     if (rcMode.load()) {
@@ -1837,7 +2112,12 @@ void loop() {
     return;
   }
 
-  const int command = pendingCommand.exchange(0);
+  updateControlWatchdog(now);
+  int command = pendingCommand.exchange(0);
+  if (command != STOP_COMMAND && !sessionConnected(now)) command = 0;
+  // Recheck expiry after draining the queue so a late request cannot restart motion.
+  updateControlWatchdog(now);
+  if (command != STOP_COMMAND && !sessionConnected(now)) command = 0;
   if (command == STOP_COMMAND) {
     // 마지막 각도의 PWM을 유지한다.
     forkMoving.store(false);
@@ -1871,11 +2151,14 @@ void loop() {
     } else if (command >= FORK_ANGLE_COMMAND_BASE && command <= FORK_ANGLE_COMMAND_BASE + SERVO_MAX_ANGLE &&
                servoAngle.load() >= 0) {
       startForkMove(command - FORK_ANGLE_COMMAND_BASE, now);
+    } else if (command == INSPECTION_COMMAND) {
+      startInspectionTrip(now);
     } else if (command == REVERSE_TEST_COMMAND) {
       startReverseTest();
     } else if (command > SET_POSITION_OFFSET && command <= SET_POSITION_OFFSET + POINT_COUNT) {
       location = static_cast<Node>(command - SET_POSITION_OFFSET - 1);
       destination = NO_NODE;
+      inspectionTrip = false;
       publish(State::Ready);
     } else if (command > 0 && command <= POINT_COUNT) {
       startTrip(static_cast<Node>(command - 1), now);
