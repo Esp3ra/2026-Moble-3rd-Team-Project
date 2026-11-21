@@ -1,0 +1,205 @@
+# MOBOT 공통 통신 규약과 DTO
+
+2026-11-21 · v0.1.0 채택 · 첫 통합 구현 기준 · 구매 웹, 관리자 WPF, 업무 서버, 비전, 현장 Pi·UNO, myCobot Pi, ESP32 AGV
+
+업무 규칙은 [팀 규약 공유본](../프로젝트_전체규약_팀답변_공유본.md)을 따른다. 팀은 이 문서와 OpenAPI를 파트 간 첫 연동의 공통 기준으로 사용한다. 정확한 자료형, 필수 필드, 허용값, 응답, 인증 방식과 예제는 [openapi.yaml](openapi.yaml)에 있다. 업무 서버는 다음 장비를 선택하고, 각 장비의 연결 모듈은 자기 장비의 완료 증거를 제공한다.
+
+## 1. 누가 누구를 호출하는가
+
+| 발신 → 수신 | 연결 규약 | 실제 담당 범위 |
+|---|---|---|
+| 구매 웹·WPF → 메인 PC | HTTPS, UTF-8 JSON, `/api/v1` | 웹은 주문·공개 조회·수락 전 취소, WPF는 관리자 세션으로 주문·현장 상태를 조회·조작한다. SQLite 트랜잭션은 업무 서버가 관리한다. |
+| 메인 PC → 현장 Pi·로봇 Pi | 장비별 연결 모듈의 `POST /device/v1/commands`, `GET /device/v1/commands/{command_id}`, `GET /device/v1/status` | 현장 Pi가 UNO의 시리얼 회신을 해석한다. 로봇 Pi는 보정과 작업 범위를 확인하고 조립 단위 명령을 관절·집게 동작으로 수행한다. |
+| 메인 PC → ESP32 AGV | 메인 PC의 AGV 연결 모듈에서 같은 장비 계약을 제공하고, 내부적으로 ESP32의 기존 HTTP 제어 세션·하트비트·상태 조회를 사용한다. | 회차와 명령 ID는 연결 모듈이 보존한다. WPF에서 ESP32로 직접 이동 명령을 보내지 않는다. 기존 WebSocket을 팀 전체의 필수 기능으로 두지 않는다. |
+| 장비 연결 모듈 → 메인 PC | `POST /api/v1/device-events`. 미전달 이벤트는 재전송하고 서버는 `GET /device/v1/events`로 누락 구간을 조회할 수 있다. | 이벤트 접수·공정 단계 변경·후속 명령 등록을 같은 SQLite 트랜잭션에 담는다. 물리 장비로의 전송은 커밋 후 수행한다. |
+| 메인 PC ↔ 카메라·비전 | 같은 PC의 함수 호출과 이벤트 DTO. 영상 본문은 JPEG 조회 경로로 분리한다. | 카메라 1은 투입 QR, 2는 위치 보정, 3은 동일 프레임의 QR·부품 검사, 4는 실시간 관제만 담당한다. 카메라 4 영상은 보관하지 않는다. |
+
+업무 서버·장비 주소와 포트, TLS 인증서, 시리얼 포트는 배포 환경 설정으로 둔다. 외부에는 구매 웹과 공개 API만 노출한다. 관리자·장비·제어 주체는 서로 다른 자격 증명을 사용한다. JSON, 상태 응답의 `device_id`는 인증된 연결의 장비와 일치해야 한다. 실물 운전 제어 주체는 한 번에 하나다.
+
+## 2. 데이터에서 공통으로 지킬 것
+
+| 식별자 | 생성·수명 | 용도 |
+|---|---|---|
+| `request_id` | 웹·WPF가 버튼 조작 한 번에 한 개 생성 | 응답 유실 후 같은 요청을 재시도한다. |
+| `order_id` | 서버가 주문당 한 개 생성 | 외부 비회원도 이 번호로 주문을 조회하므로 추측하기 어려운 UUID v4를 발급한다. 내부 순번은 별도 관리한다. |
+| `pallet_id` / `cycle_id` | 실물 QR은 `PALLET-01`~`PALLET-08` 고정. 서버는 배출 지시 전 새 생산 회차를 생성 | QR을 읽기 전에는 `pallet_id=null`이다. 같은 팔레트의 다음 사용은 다른 회차다. |
+| `command_id` | 제어 서버가 장비 동작 한 건마다 생성 | 이동·배출·하역 요청의 재전송과 새 동작을 구별한다. |
+| `event_id` / `boot_id` / `event_seq` | 발신 측이 이벤트마다 UUID, 프로세스 시작마다 UUID, 같은 부팅 안에서 1부터 증가하는 순번을 생성 | 중복·누락·역순·재부팅을 구별한다. 시각을 제공하지 않는 UNO 이벤트의 발생 시각은 현장 Pi가 받은 시각으로 정의한다. |
+| `inspection_id` | 업무 서버가 해당 회차의 암실 검사 시작 시 한 번 생성해 비전에 전달 | 중복 도착 통지가 최초 검사를 두 번 만들지 않도록 한다. 재검·재조립·재투입은 이번 범위에서 제외한다. |
+
+JSON 필드는 `snake_case`, 서버 시각은 UTC의 RFC 3339 문자열과 끝의 `Z`, WPF 표시는 한국 시각을 사용한다. 숫자 필드의 단위는 이름에 넣는다. 필수 필드의 누락은 오류다. `null`은 스키마가 허용한 ‘미배정·미확인’에만 쓴다. 연락처는 문자열이다. C#은 같은 JSON을 PascalCase 속성으로, Python은 snake_case로 읽는다. 화면의 한글 상태 문구, 버튼 활성 여부, 색상은 WPF ViewModel에서 결정한다.
+
+**부품과 배송.** 주문 한 건에 `H1/H2` 중 하나, `L1~L3` 중 하나, `R1~R3` 중 하나를 받는다. 조합은 18개다. 같은 번호의 L/R은 같은 실물 재고 풀을 쓴다. 예를 들어 H1·L1·R1 주문은 몸통 1개, H1 1개, 집기팔 2개를 차감한다. `ARM_1~3`과 `BODY`는 재고 API의 공통 키이다. 몸통의 제품명·YOLO 라벨은 미정이다. `target_station`은 주소에서 자동 배정한 정상 HUB(서울 3, 평택 4, 수원 5), `dispatch_station`은 검사 후 실제 목적지(3~7)다. 시·도에 해당하는 행정구역을 파싱한다. 경기도 광주시는 3번, 광주광역시는 5번으로 처리한다. 미분류·모호한 주소는 422로 돌려주고 재고 차감 전에 종료한다.
+
+## 3. 화면·서버의 요청과 응답
+
+아래 경로는 메인 서버의 `/api/v1` 기준이다. 전체 경로 목록과 상태별 응답 본문은 OpenAPI의 `paths`를 따른다.
+
+| 호출 | 요청 → 결과 | 권한·완료 의미 |
+|---|---|---|
+| `GET /catalog`, `POST /orders` | `OrderOptions`, `SubmitOrder → PublicOrder` | 비회원. 유효성 검사, 주소 배정, 실물 공용 재고 차감, 주문 생성을 한 트랜잭션으로 수행한다. 신규 201, 동일 요청 재전송 200. 품절 409. |
+| `POST /orders/lookup`, `POST /orders/cancel` | `OrderLookup` 또는 `PublicCancel → PublicOrder` | 비회원 본인 주문번호. 공개 응답에는 회사·전화·전체 주소·검사 사진·장비 로그를 넣지 않는다. 조회 번호는 URL과 일반 로그에 남기지 않고 속도 제한을 적용한다. 고객 취소는 수락 전만 허용하며 차감 재고를 한 번 복구한다. 별도 확인코드는 팀 미정이다. |
+| `POST /auth/login`, `GET /auth/me`, `POST /auth/logout` | `Login → Session`, `Account`, 로그아웃 204 | 두 관리자 등급. 시간 경과에 따른 강제 로그아웃을 두지 않는다. 로그아웃·계정 폐기·권한 변경 시 서버가 세션 또는 권한을 재검증한다. 앱·서버 재시작 후 세션 유지 방식은 미정이다. |
+| `GET /orders`, `GET /orders/{order_id}`, `GET /pallets` | `OrderPage`, `AdminOrder`, `PalletPage` | 두 관리자 등급. 주문 목록은 접수 시각 내림차순·ID로 동률 처리한다. 생산 대기열은 별도의 `approval_seq` 오름차순이다. |
+| `POST /orders/{order_id}/accept`, `…/cancel` | `Request → AdminOrder` | 수락·취소·투입 경쟁을 서버에서 직렬화한다. 수락 순번은 DB가 부여한다. 관리자 취소는 대기·배출 전까지만 가능하다. 배출 지시와 실제 배출 사이에 상태가 불명확하면 409 후 대조한다. 배출 전 관리자 취소가 확정되면 주문 접수 시 차감한 재고를 한 번 복구한다. |
+| `GET /plant`, `POST /plant/actions`, `GET /plant/actions/{request_id}` | `Plant`, `PlantAction → PlantTicket` | 장비·카메라 준비, 공정 단계, 일시정지 상태를 구분한다. 시작·정지·해제 요청은 202. 양쪽 관리자 모두 가능하다. 완료는 해당 요청 ID로 조회한다. |
+| `POST /cycles/{cycle_id}/qr-retry` | `QrRetry → QrTicket` | `READ_QR`은 같은 팔레트의 새 판독 묶음을 시작하고, `SAVE_BINDING`은 마지막 성공 판독의 DB 저장만 재시도한다. 각각 같은 요청 ID로 중복을 제거한다. 결과 조회 경로를 제공한다. |
+| `GET /orders/{order_id}/history`, `GET /inspections/{inspection_id}`, `…/image` | `HistoryPage`, `Inspection`, JPEG | 두 관리자 등급이 주문에서 QR·검사 사유·사진·하역·오류를 추적한다. 기록이 없는 사진은 404다. |
+| `GET /cameras/{camera_id}/frame`, 수동 조작·현장 확인 API | JPEG, `ManualRequest → ManualResult`, `Reconcile → ReconcileResult` | 두 관리자 등급. 실물 확인의 담당·근거를 기록한다. 수동 조작은 제어권 전환 후 해당 장비에서 사전 등록한 절차만 실행한다. 임의의 장비 코드·시리얼 문자열 입력은 지원하지 않는다. |
+| 재입고·계정·결산·설비 설정·자료 삭제 | `Restock`, `AccountCreate`, `RoleUpdate`, `MetricQuery`, `SettingChange`, `ArchiveDelete` | 최상위 전용은 계정 관리·결산·설비값 변경·자료 삭제다. 재입고 등록도 최상위 관리자만 할 수 있다. 결산 산식·기간 정책과 개별 설비 설정 프로필이 확정돼야 해당 기능을 활성화한다. |
+
+**메서드 이름과 호출 책임.** OpenAPI의 `operationId`가 언어 간 대조 기준이다. C#의 비동기 서비스는 다음처럼 대응시킨다. WPF 버튼은 ViewModel에서 서비스를 호출하고, DTO 역직렬화와 HTTP 응답 해석은 서비스가 맡는다.
+
+| 업무 | OpenAPI 메서드 | C# 호출 예시 또는 호출 주체 |
+|---|---|---|
+| 주문 수락 | `approveOrder` | `ApproveOrderAsync(orderId, request, cancellationToken)` |
+| 설비 정지·해제 접수 및 진행 조회 | `actOnPlant`, `getPlantAction` | `ActOnPlantAsync(action, cancellationToken)` → `GetPlantActionAsync(requestId, cancellationToken)` |
+| QR 재시도 | `retryQr`, `getQrRetry` | `RetryQrAsync(cycleId, request, cancellationToken)` |
+| 장비 명령 및 결과 조회 | `acceptDeviceCommand`, `getDeviceCommand` | 업무 서버의 장비 클라이언트가 두 메서드를 호출한다. |
+| 완료 이벤트 등록 | `recordDeviceEvent` | 연결 모듈이 같은 `event_id`로 재전송하고 서버는 기존 접수 결과를 돌려준다. |
+
+**QR 판독과 저장 재시도.** 배출 직후 서버가 판독 묶음마다 `read_id`를 발급한다. 첫 시도 후 2초 간격으로 최대 두 번 더 읽는다. 세 번 모두 실패하면 벨트를 멈춘 채 WPF에 경고한다. WPF는 `GET /plant`의 `feed_qr.read_id`를 재시도 요청의 `previous_read_id`에 넣는다. READ_QR은 새 묶음에서 1회차로 시작하고 SAVE_BINDING은 성공한 묶음과 팔레트 번호를 그대로 써서 저장만 반복한다. 서버는 현재 회차·판독 묶음·시도 번호를 대조한다. 이전 묶음의 늦은 성공 회신은 벨트 출발 조건을 충족하지 않는다.
+
+공개 화면의 정상 진행은 접수 → 제작 중 → 검사 중 → 배송 중 → 허브 도착이다. 수락 대기와 수락 후 생산 대기는 모두 공개 화면의 ‘접수’로 보이며 WPF에서만 구분한다. 오류품은 `outcome=ERROR`로, 취소는 `CANCELLED`로 표시한다. 오류품을 정상 HUB 도착으로 표시하지 않는다. `progress`에는 마지막 정상 진행 단계를 유지한다. HTTP 목록은 기본 50건·최대 100건과 불투명한 `next_cursor`를 사용한다. 커서는 정렬 키와 마지막 ID를 함께 보존한다.
+
+## 4. 장비 명령과 실제 완료를 연결하는 법
+
+서버가 장비 연결 모듈에 `X-Expected-Boot-Id`와 `DeviceCommand`를 보낸다. 모듈은 수신자, 회차, 운전 모드, 부팅 ID, 이전 단계와 입력을 확인한 뒤 접수 상태를 기록하고 202를 돌려준다. `DeviceCommand.params`의 구조는 `action`마다 다르다. 서버가 공정을 진행시키는 조건은 다음 표의 **같은 회차·같은 명령의 완료 이벤트**이다.
+
+| 제어 명령 / 대상 | 완료 이벤트 또는 관측 | 서버의 다음 동작 |
+|---|---|---|
+| `DISPENSE` / LINE | `PALLET_DISPENSED`와 배출 판단 근거. 현재 장치의 타이머 완료는 실물 센서 검출과 별도 기록 | 벨트 정차 유지. 카메라 1 판독과 DB 배정이 성공해야 출발 |
+| `MOVE_TO_ASSEMBLY` / LINE | `ASSEMBLY_STATION_STOPPED`에 IR1 감지와 벨트 정지 출력 | 카메라 2의 보정 결과를 확인하고 조립 요청 |
+| `ASSEMBLE` / ARM | `ARM_STANDBY_AFTER_ASSEMBLY`. 주문 부품 작업 완료(`assembly_steps_verified`)와 대기 자세 도착(`standby_verified`)을 모두 확인 | 이송 재개. 파지 확인 근거·도착 허용오차가 정해질 때까지 실물 완료 판단은 보류 |
+| `MOVE_TO_PICKUP` / LINE | `PICKUP_STATION_STOPPED`에 IR2 감지와 벨트 정지 출력 | AGV 인수 호출, 인수 중 벨트 정차 유지 |
+| `PICK_UP` / AGV | `LIFT_FINISHED`에 1번 정차, 지게 목표 110°, 지게 동작 종료 | 적재 상태로 2번 경유 후 암실로 이동 |
+| `GO_TO_INSPECTION` / AGV | `INSPECTION_ARRIVED`. 해당 작업이 이동을 시작한 뒤 `state=inspecting`에 진입 | 회차별 최초 검사 ID 한 개를 배정하고 카메라 3 촬영 |
+| 비전 검사 / 메인 PC | `INSPECTION_CAPTURED` 또는 `INSPECTION_UNAVAILABLE` | 판정과 배송 지시를 같은 DB 트랜잭션에 기록한 뒤 AGV에 지시 |
+| `DELIVER`, `UNLOAD` / AGV | 차례대로 `DESTINATION_ARRIVED`, `UNLOAD_FINISHED`에 동일 목적지와 60° 하역 동작 종료 | 해당 목적지의 하역 이력 기록 후 2번 복귀 요청 |
+| `RETURN_STANDBY` / AGV | `STANDBY_RETURNED`에 2번 정차, 85° 지게 동작 종료 | 사이클 종료 후 수락 순번상 다음 주문 한 건만 투입 |
+
+AGV에는 별도 적재 센서가 없다. `fork_target_deg`는 목표각, `fork_moving=false`는 서보 동작 종료를 뜻한다. UNO의 벨트 정지 출력도 물리 속도 측정과 구분한다. 센서·실물 상태와 이력이 충돌하면 결과를 미확인으로 표시한다.
+
+**메인 PC 내부의 카메라 호출.** 비전 담당과 서버 담당은 아래 함수 단위로 연결한다. 함수는 물리 장비의 다음 동작을 지시하지 않는다.
+
+| 함수 | 입력 | 반환 또는 이벤트 |
+|---|---|---|
+| `read_feed_qr` | 생산 회차, 판독 묶음 ID, 시도 번호, 카메라 1 | `FEED_QR_READ`. 읽기 실패는 `pallet_id=null`, 영상 자체가 없으면 `frame_id=null`이다. |
+| `locate_assembly` | 생산 회차, 주문 사양, 유효한 보정 ID, 카메라 2 | `PoseSet` 또는 구조화된 오류. 서버는 완료 시점에 활성 회차·주문 사양·보정 ID를 다시 대조한다. |
+| `inspect_product` | 생산 회차, 검사 ID, 카메라 3 | 동일 프레임의 `VisionInspection` 또는 `INSPECTION_UNAVAILABLE`. 목적지는 업무 서버가 판정한다. |
+
+**카메라 2 → 로봇팔.** `PoseSet`에는 머리·왼팔·오른팔 각각의 집기/장착 자세 여섯 개가 있다. 좌표 단위는 mm와 °, 기준은 로봇 베이스와 집게 중심이다. `calibration_id`가 다르거나 허용 시간이 지난 측정은 거절한다. Euler 회전 순서·축 부호, 집게 중심 보정, 허용 오차·자세 유효시간과 작업 공간은 **로봇·비전 담당이 실측해 같은 프로필로 승인할 항목**이다. 수치만 채워 자동 운전하지 않는다.
+
+**카메라 3 →업무 서버.** 같은 `frame_id`의 QR과 세 부위의 `SEEN / MISSING / UNKNOWN` 관측을 `VisionInspection`으로 보낸다. `SEEN`만 실제 공통 라벨과 함께 올 수 있다. 한 번 검출이 없었다는 사실만으로 `MISSING`을 확정하지 않는다. `INSPECTION_C APTURED`의 내·외부 회차 값과 서버가 배정한 검사 ID가 일치해야 한다. 프레임 자체가 없으면 같은 검사 ID로 `INSPECTION_UNAVAILABLE` 이벤트와 사유 `NO_FRAME`을 보낸다. `left.observed_id`에는 해당 자리에서 실제로 검출한 라벨을 적는다. 왼쪽에서 `R1`을 읽었으면 그대로 보내며, 주문의 왼팔 코드로 바꾸지 않는다. 실물 좌우와 영상 좌우를 매핑하는 방법은 비전 프로필에서 정한다.
+
+| 서버가 판정할 사실 | 검사 결과 | 실제 목적지 |
+|---|---|---|
+| 필수 부품 하나 이상 누락 확인. QR 오류가 동반돼도 동일 | PART_MISSING | 6번 |
+| 누락 확인 없이 부품 종류 또는 QR이 다름 | MISMATCH | 7번 |
+| 가림, 판독 불가, 프레임 없음 등 증거 부족 | INDETERMINATE. WPF에 즉시 오류 | 7번 |
+| 팔레트 QR·세 부위가 모두 이번 주문과 일치 | PASS | 주문에 저장된 정상 HUB 3·4·5번 |
+
+**전문 예시 · AGV 암실 도착.** 같은 명령을 서버·AGV 담당이 대조하는 예제다. 아래 ID와 시각은 예시값이다.
+
+1. 업무 서버가 장비 연결 모듈의 `POST /device/v1/commands`에 다음 본문을 보낸다. `X-Expected-Boot-Id` 헤더에는 현재 AGV 연결 모듈이 보고한 `boot_id`를 넣는다.
+
+```json
+{
+  "command_id": "cccf57f2-133b-4aab-ad45-18b8004b240a",
+  "device_id": "AGV",
+  "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+  "action": "GO_TO_INSPECTION",
+  "params": {}
+}
+```
+
+2. 연결 모듈은 HTTP 202와 다음 본문으로 접수를 알린다. 이 시점에는 카메라 3을 촬영하지 않는다.
+
+```json
+{
+  "command_id": "cccf57f2-133b-4aab-ad45-18b8004b240a",
+  "device_id": "AGV",
+  "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+  "state": "ACCEPTED",
+  "updated_at": "2026-11-21T04:10:00Z",
+  "result_event_id": null,
+  "error": null
+}
+```
+
+3. AGV가 실제로 검사 정차 상태에 들어가면 연결 모듈이 `POST /api/v1/device-events`에 다음 본문을 보낸다. 서버가 회차·명령·단계를 대조한 뒤 검사 ID를 발급한다. 같은 이벤트가 다시 들어와도 같은 검사 결과를 조회한다.
+
+```json
+{
+  "event_id": "78af512d-da75-4d53-90ad-c1f74b2d4f90",
+  "device_id": "AGV",
+  "boot_id": "d7645267-f6a5-42f9-9918-5a591ea74301",
+  "event_seq": 18,
+  "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+  "command_id": "cccf57f2-133b-4aab-ad45-18b8004b240a",
+  "occurred_at": "2026-11-21T04:10:14Z",
+  "kind": "INSPECTION_ARRIVED",
+  "data": {
+    "state": "inspecting"
+  }
+}
+```
+
+## 5. 수락, 중복, 일시정지, 통신 끊김
+
+- **접수와 완료.** HTTP 202는 접수다. 명령 상태는 `ACCEPTED → RUNNING → COMPLETED`를 기본으로 한다. 실패는 `FAILED`와 구조화된 오류를, 취소되어 실행이 끝난 명령은 `STOPPED`를 사용한다. 통신 소실로 결과를 모르면 서버가 `UNKNOWN`으로 보류하고, 후속 대조가 끝날 때만 해소한다. 제어된 공정 일시정지 중 원래 명령은 진행 중으로 유지하고 장비의 `PAUSED` 상태를 함께 표시한다.
+- **중복 방지.** 요청을 수행할 권한을 먼저 확인한다. 같은 호출자·동작·ID와 동일한 정규화 입력은 기존 응답 또는 현재 결과를 돌려준다. ID 재사용에 입력이 다르면 409다. SQLite에는 요청/명령 키, 이벤트 ID와 (장비, 부팅 ID, 순번) 고유 제약 및 동시에 진행 중인 회차 한 건 제약을 둔다. 서버는 후속 명령을 전송 전에 저장한다. 이미 접수한 장비는 같은 명령을 새 물리 동작으로 만들지 않는다.
+- **순서·복구.** 같은 ID라도 본문이 다른 이벤트는 409로 보류한다. 순번 공백·이전 부팅·이전 회차·예상하지 않은 단계는 이력에 남기고 바로 다음 단계로 넘기지 않는다. 누락 이벤트를 `after_seq`와 `boot_id`로 복원하고 커서로 이어 읽는다. 장비 상태와 DB가 계속 다르면 `RECONCILE_REQUIRED`이다. 연결이 끊긴 직후의 404만으로 배출·파지·하역을 재명령하지 않는다. 장비가 재부팅 직전 실물을 움직였고 완료 저장 전에 꺼진 경우에는 작업자가 실물을 확인한 뒤 결과를 기록한다.
+- **정상 일시정지.** 먼저 새 작업·후속 명령의 발행을 잠그고 LINE·ARM·AGV에 각각 `PAUSE`를 발행한다. `DEVICE_PAUSED`에 LINE은 벨트·액추에이터 출력 정지, ARM은 팔 동작 정지, AGV는 주행·지게 동작 정지를 회신한다. 하나라도 미확인 상태이면 완료 이벤트를 생성하지 않는다. 상태가 확인된 장비부터 표시하되 전부 확인할 때까지 전체는 `PAUSING`이다. 정상 정지 해제는 해당 정지 명령 ID를 인용해 `RESUME`하고 중단 단계와 타이머에서 즉시 이어간다. 물리 비상정지·통신 장애·위치 불명은 현장 확인과 별도 복구 절차를 적용한다.
+- **기동과 WPF.** 서버·DB와 세 장비 및 네 카메라 준비 상태를 확인한 뒤만 자동 시작을 허용한다. WPF 단절 시 마지막 갱신 시각, 경고와 비활성 조작 버튼을 표시한다. WPF 단절, 장비 제어권 단절, 정상 운영자 정지를 각각 구별한다.
+- **오류.** 400은 구조·자료형 오류, 401은 인증 실패, 403은 권한·장비 ID 불일치, 404는 대상 없음, 409는 회차·중복·재고·상태 충돌, 422는 의미 오류(주소·호환성·보정), 429는 조회 빈도 초과, 503은 장비·DB 이용 불가다. 오류 응답에는 `code/message/retry/trace_id`를 포함한다. `retry=QUERY_FIRST`는 조회 우선, `OPERATOR`는 현장 확인이다. 어떤 5xx도 물리 동작이 실행되지 않았음을 보증하지 않는다.
+- **공개와 보관.** 내부 이력에는 주문·회차·장비·단계·시간·오류·마지막 정상 상태와 조치 근거를 연결한다. 인증키·암호·비회원 조회용 주문번호 원문·고객 연락처는 일반 접속 로그에서 제외한다. 검사 사진·주문·로그는 프로젝트 종료까지 관리자 열람, 최상위 관리자만 삭제할 수 있다. 실행 중인 회차의 필수 증거와 중복 방지 기록은 삭제와 충돌하면 409를 반환한다.
+
+## 6. 현장 Pi와 UNO가 교환하는 줄 단위 명령
+
+**현재 진행본.** PR #11의 회차 모드는 `a <숫자회차>`, `ASSEMBLY_WAIT:<회차>`, `HEARTBEAT <회차>`, `ASSEMBLY_DONE <회차>`를 사용한다. 데모는 고정 시간으로 조립을 모의한다. 최초 벨트 출발은 여전히 액추에이터 복귀와 결합돼 있으며 기존 `s`는 단계 보존 정지를 뜻하지 않는다. 11월 21일 팀 공유본의 ZIP, 이 PR, 아래 v1 형식을 별도 버전으로 취급한다.
+
+**v1 시리얼 형식.** USB 115200 bps, 8N1, ASCII, 한 줄에 한 메시지, 송신 LF·수신 CRLF 허용. LF 앞 본문은 최대 63바이트(CR 제외), 넘친 줄은 끝까지 버리고 오류만 반환한다. 숫자는 10진 부호 없는 32비트, 진행 회차가 없을 때의 PAUSE·RESUME에만 0 회차를 쓴다. Pi가 UUID와 짧은 회차·명령 번호의 대응을 저장한다. 아래의 `sid`는 Pi가 연결할 때 부여하는 0이 아닌 세션 번호다.
+
+| 방향 | 전문 | 의미 |
+|---|---|---|
+| UNO → Pi | `READY V1` | 재부팅 또는 재협상 요청. 이전 상태를 조회·대조하기 전 새 동작을 허용하지 않는다. |
+| Pi → UNO → Pi | `V1 SYNC sid` → `V1 OK sid` | 펌웨어 버전과 세션 확인. SYNC는 이동 또는 재개 명령이 아니다. 활성 동작 중 세션 교체는 보류한다. |
+| Pi → UNO | `C sid cyc seq op` | `op`는 DISP(배출), ASM(IR1까지), END(IR2까지), PAUSE, RESUME. 같은 세션·번호의 다른 입력은 충돌이다. |
+| UNO → Pi | `R sid cyc seq state detail` | 상태는 ACK/RUN/DONE/FAIL/HOLD. 완료 근거 예시는 DISP_TIMER, IR1_STOP, IR2_STOP, BOTH_PAUSED, RESUMED이다. HOLD는 원래 동작의 일시정지이고 정지 명령 자체의 완료는 DONE BOTH_PAUSED이다. |
+| Pi → UNO | `Q sid cyc seq`, `H sid` | Q는 해당 명령의 최근 상태를 R로 돌려준다. H는 생존 확인이고 응답은 `V1 ALIVE sid`이다. 확인할 수 없는 명령은 `R sid cyc seq FAIL UNKNOWN_SEQ`로 회신하며 Pi가 결과 미확인으로 올린다. |
+| 양방향 | `ERR reason` | 잘못된 형식·길이·세션·버전에 대한 응답이다. 해석 실패로 출력을 바꾸지 않는다. |
+
+예를 들어 `C 41 7 12 ASM` 접수 때 `R 41 7 12 ACK OK`, IR1에서 정지 출력을 적용한 뒤 `R 41 7 12 DONE IR1_STOP`을 보낸다. DISP와 ASM을 별도 명령으로 구현해야 QR·배정 저장 전 벨트 출발이 차단된다. 기존 UNO는 새 전문을 처리하지 않는다. 버전 협상 실패 시 연결 모듈이 자동 운전을 거절한다. 시리얼 단절 시 안전 정지·감시 시간은 현장 검증 대상이다.
+
+## 7. 데모에서 v1로 옮길 때
+
+| 진행본 | 재사용 | 변경점 |
+|---|---|---|
+| [웹·서버 진행본](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/blob/a7e7b3a6ffa21bb6816ba102f5c9e7d443cace24/demos/mobot/orders.py) | Flask, SQLite 트랜잭션, 주문 요청 ID, 주문·팔레트 목록 | 기존 `id/job_id`, 부품별 과거 코드·선택 문자열, 순번 주문번호를 v1과 명시적으로 대응한다. 지역명 일부 문자열 검색을 주소 권역 매핑으로 교체한다. 기존 주문번호로 비회원 조회를 허용할 땐 노출 가능한 정보와 식별자 이전 방식을 별도 검토한다. |
+| [WPF 주문 서비스](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/blob/6790e1cc9f5aad2a186ee518667a86413383f97c/WPF/RobotFactory.Admin/Services/OrderApiClient.cs) | snake_case JSON과 C# 속성 대응, 화면과 HTTP 서비스 분리 | v1의 `order_id`, 중첩 `spec`, `target_station/dispatch_station`을 전용 DTO로 읽는다. 조회 DTO와 한국어 표시 모델을 분리한다. 기존 로그인 데모의 필수 만료시각·자동 만료는 최신 시간제한 없음 정책과 조정한다. |
+| [UNO 회차 펌웨어](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/blob/9426c8d4cb48f73240809c7e7072904b5464f897/firmware/RobotWorkSimulation/RobotWorkSimulation.ino) | 회차 확인, IR 필터, 조립 대기 중 통신 감시 | 배출/최초 출발 분리, 단계 보존 정지, 시리얼 명령 중복 제거 및 완료 조회를 구현한다. 종전 완료 문자열을 v1 성공으로 일괄 변환하지 않는다. |
+| [AGV HTTP 클라이언트](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/blob/ec130a5c42082188637a6c99dba66055bb60a261/AGV/agv_client.py) | `POST /control/session`, `/heartbeat`, `/inspection`, `/go?point=…`, `/servo?angle=…`, `/stop`, `GET /status` | 연결 모듈이 동작 전 상태와 회차를 저장한다. inspecting·위치·지게 동작 종료를 종합해 이벤트를 낸다. AGV 시험값 500ms/2초는 현재 구현 설정이다. 재연결 시 세션 복구와 이동 재실행을 분리한다. |
+
+## 8. 통합 검증과 실측 후 확정할 항목
+
+| 재현 입력 | 기대 결과 |
+|---|---|
+| H1·L1·R1 주문, 집기팔 재고 한 개 | 409 OUT_OF_STOCK. 몸통·머리 등 일부 재고 차감과 주문 생성 모두 없어야 한다. |
+| 같은 주문 요청을 두 번 제출 / 같은 ID의 부품 변경 | 첫 경우 주문·차감 각 한 건, 둘째는 409 CONFLICT. |
+| 투입 QR 3회 실패 / QR 성공 직후 DB 저장 실패 | 전자는 최초+2초 간격 두 번 후 WPF 재판독 대기. 후자는 저장 재시도. 모두 배출 추가 실행·저장 전 벨트 출발이 없어야 한다. |
+| AGV가 암실 명령에 202 회신 / 동일 도착 이벤트 두 번 | 202에서는 촬영하지 않는다. 도착 두 번에는 최초 검사 한 건만 존재한다. |
+| 누락과 QR 불일치 동시 / 가림 / 프레임 없음 | 각각 6번 / 7번과 즉시 경고 / 7번과 즉시 경고. 사진이 없으면 존재하지 않는 파일을 연결하지 않는다. |
+| 하역 후 통신 단절 또는 부팅 ID 변경 | 이전 회차 상태와 실물을 대조한다. 같은 물리 하역을 자동으로 다시 보내지 않는다. |
+| 정상 전체 정지·해제 / 일부 장비 미응답 | 전자는 모든 장비 확인 뒤 중단 지점에서 한 번 재개. 후자는 미확인 표시·현장 복구까지 보류. |
+| 하역 또는 적재 중 2번 경유 / 하역 후 2번 정차·85° | 앞의 두 상황은 다음 주문 대기, 마지막 상황만 사이클 종료와 다음 투입 허용. |
+
+이 표는 계약 검증 예시다. 팀이 정한 최종 실물 시험은 기본 5개 경로와 예외 5종을 각각 3회씩, 총 30회 수행한다.
+
+**통합 및 배포 때 확인할 항목**
+
+- 서버·WPF·웹은 같은 예제의 필드, 권한, HTTP 응답을 대조한다. UNO·AGV·로봇팔 담당은 실제 명령에서 접수·정지·완료·복구 신호가 명세와 일치하는지 검증한다.
+- 접수 제한시간, 하트비트, 동작 완료 제한시간, 상태 조회 주기, 보정값 유효시간과 허용오차는 실측 후 장비 프로필에 기록한다. 실제 주소·포트·인증서와 장비별 자격 증명은 배포 시 설정한다.
+- 로봇·비전 담당은 축 방향·회전 순서·공구 보정과 파지·장착 확인 근거를 실물로 검증한다. 물리 비상정지 배선·복구 방식, 기존 비회원 주문번호 이전, 재시작 후 로그인 유지, 결산 산식은 별도 결정 사항이다.
+
+규격 참고 자료는 [OpenAPI 3.1.1](https://spec.openapis.org/oas/v3.1.1.html)과 [HTTP 202 Accepted](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.3.3)이다.

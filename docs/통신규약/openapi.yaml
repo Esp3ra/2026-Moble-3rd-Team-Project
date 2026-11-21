@@ -1,0 +1,3288 @@
+openapi: 3.1.1
+info:
+  title: MOBOT 공통 통신 규약
+  version: 0.1.0
+  description: 2026-11-21 채택한 첫 통합 구현 기준. /api/v1은 메인 PC 업무 서버, /device/v1은 장비 연결 모듈이 제공한다. 구현 상태·기존 API와의 대응은 동봉된 Markdown을 따른다.
+servers:
+- url: /
+tags:
+- name: 구매 웹
+- name: 인증
+- name: 관제
+- name: 운영
+- name: 장비
+- name: 이벤트
+paths:
+  /api/v1/catalog:
+    get:
+      operationId: getCatalog
+      summary: 부품 옵션과 좌우 공용 재고
+      tags: [구매 웹]
+      security: []
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderOptions'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/orders:
+    post:
+      operationId: submitOrder
+      summary: 비회원 주문과 재고 차감
+      tags: [구매 웹]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitOrder'
+      responses:
+        '200':
+          description: 같은 요청의 기존 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicOrder'
+        '201':
+          description: 처음 생성됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicOrder'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+    get:
+      operationId: listAdminOrders
+      summary: 관리자 주문 목록
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: query
+        name: cursor
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/orders/lookup:
+    post:
+      operationId: lookupOwnOrder
+      summary: 주문번호로 공개 상태 조회
+      tags: [구매 웹]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderLookup'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicOrder'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/orders/cancel:
+    post:
+      operationId: cancelOwnOrder
+      summary: 수락 전 본인 주문 취소
+      tags: [구매 웹]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicCancel'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicOrder'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: WPF 로그인
+      tags: [인증]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Login'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/auth/me:
+    get:
+      operationId: getSessionAccount
+      summary: 세션 계정과 등급 조회
+      tags: [인증]
+      security:
+      - adminToken: []
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: 로그아웃과 세션 철회
+      tags: [인증]
+      security:
+      - adminToken: []
+      responses:
+        '204':
+          description: 로그아웃됨
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/orders/{order_id}:
+    get:
+      operationId: getAdminOrder
+      summary: 관리자 주문 상세
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: order_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrder'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/orders/{order_id}/accept:
+    post:
+      operationId: approveOrder
+      summary: 제작 수락과 대기 순번 부여
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: order_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Request'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrder'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [ADMIN, SUPER_ADMIN]
+  /api/v1/orders/{order_id}/cancel:
+    post:
+      operationId: cancelQueuedOrder
+      summary: 배출 전 대기 주문 취소
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: order_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Request'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOrder'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [ADMIN, SUPER_ADMIN]
+  /api/v1/orders/{order_id}/history:
+    get:
+      operationId: getOrderHistory
+      summary: 주문별 오류·검사·이송 이력
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: order_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+      - in: query
+        name: cursor
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/pallets:
+    get:
+      operationId: listPallets
+      summary: 팔레트 현재 배정
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: query
+        name: cursor
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PalletPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/plant:
+    get:
+      operationId: getPlant
+      summary: 공정·연결 상태와 마지막 갱신
+      tags: [관제]
+      security:
+      - adminToken: []
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plant'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/plant/actions:
+    post:
+      operationId: actOnPlant
+      summary: 자동 운전 시작·전체 정지·해제
+      tags: [관제]
+      security:
+      - adminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlantAction'
+      responses:
+        '202':
+          description: 요청이 접수됨. 실제 완료는 상태·이력으로 확인한다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlantTicket'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [ADMIN, SUPER_ADMIN]
+  /api/v1/plant/actions/{request_id}:
+    get:
+      operationId: getPlantAction
+      summary: 전체 장비 정지·재개 처리 확인
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlantTicket'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/cycles/{cycle_id}/qr-retry:
+    post:
+      operationId: retryQr
+      summary: 동일 팔레트 재판독 또는 배정 저장 재시도
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: cycle_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QrRetry'
+      responses:
+        '202':
+          description: 요청이 접수됨. 실제 완료는 상태·이력으로 확인한다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QrTicket'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/cycles/{cycle_id}/qr-retry/{request_id}:
+    get:
+      operationId: getQrRetry
+      summary: QR 재시도 상태 조회
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: cycle_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      - in: path
+        name: request_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QrTicket'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/inspections/{inspection_id}:
+    get:
+      operationId: getInspection
+      summary: 검사 사유와 확정 목적지
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: inspection_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Inspection'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/inspections/{inspection_id}/image:
+    get:
+      operationId: getInspectionImage
+      summary: 저장된 검사 프레임
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: inspection_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Captured-At:
+              schema:
+                $ref: '#/components/schemas/Utc'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/cameras/{camera_id}/frame:
+    get:
+      operationId: getLatestFrame
+      summary: WPF 카메라 현재 프레임
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: camera_id
+        required: true
+        schema:
+          type: string
+          enum: [CAM1, CAM2, CAM3, CAM4]
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Captured-At:
+              schema:
+                $ref: '#/components/schemas/Utc'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/commands/{command_id}/reconcile:
+    post:
+      operationId: reconcileCommand
+      summary: 현장 확인 결과 기록
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: command_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Reconcile'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconcileResult'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/manual-actions:
+    post:
+      operationId: submitManualAction
+      summary: 승인된 수동 조작 절차 요청
+      tags: [관제]
+      security:
+      - adminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualRequest'
+      responses:
+        '202':
+          description: 요청이 접수됨. 실제 완료는 상태·이력으로 확인한다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualResult'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [ADMIN, SUPER_ADMIN]
+  /api/v1/manual-actions/{command_id}:
+    get:
+      operationId: getManualAction
+      summary: 수동 조작 결과
+      tags: [관제]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: command_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualResult'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/stock:
+    get:
+      operationId: listStock
+      summary: 공용 재고 조회
+      tags: [운영]
+      security:
+      - adminToken: []
+      parameters:
+      - in: query
+        name: cursor
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /api/v1/stock/restocks:
+    post:
+      operationId: restock
+      summary: 부품별 재입고
+      tags: [운영]
+      security:
+      - adminToken: []
+      description: 최상위 관리자만 입고 수량을 등록할 수 있다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Restock'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockItem'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [SUPER_ADMIN]
+  /api/v1/accounts:
+    get:
+      operationId: listAccounts
+      summary: 계정 목록
+      tags: [운영]
+      security:
+      - adminToken: []
+      parameters:
+      - in: query
+        name: cursor
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [SUPER_ADMIN]
+    post:
+      operationId: createAccount
+      summary: 관리자 계정 생성
+      tags: [운영]
+      security:
+      - adminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountCreate'
+      responses:
+        '200':
+          description: 같은 요청의 기존 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '201':
+          description: 처음 생성됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [SUPER_ADMIN]
+  /api/v1/accounts/{account_id}/role:
+    patch:
+      operationId: changeAccountRole
+      summary: 관리자 권한 변경
+      tags: [운영]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: account_id
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleUpdate'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [SUPER_ADMIN]
+  /api/v1/settlements/query:
+    post:
+      operationId: querySettlement
+      summary: 모의 결산 집계
+      tags: [운영]
+      security:
+      - adminToken: []
+      description: 집계 산식과 기준 기간은 팀 승인 후 활성화한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetricQuery'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settlement'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [SUPER_ADMIN]
+  /api/v1/settings/{device_id}:
+    get:
+      operationId: getDeviceSetting
+      summary: 설비 설정 프로필 조회
+      tags: [운영]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Device'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Setting'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+    put:
+      operationId: applyDeviceSetting
+      summary: 검증된 설비 설정 프로필 적용
+      tags: [운영]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Device'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingChange'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Setting'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [SUPER_ADMIN]
+  /api/v1/archive/{record_id}/delete:
+    post:
+      operationId: deleteArchiveRecord
+      summary: 보관자료 삭제
+      tags: [운영]
+      security:
+      - adminToken: []
+      parameters:
+      - in: path
+        name: record_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveDelete'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deletion'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      x-allowed-roles: [SUPER_ADMIN]
+  /api/v1/device-events:
+    post:
+      operationId: recordDeviceEvent
+      summary: 장비·비전 이벤트 기록 및 중복 확인
+      tags: [이벤트]
+      security:
+      - deviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceEvent'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventAck'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /device/v1/commands:
+    post:
+      operationId: acceptDeviceCommand
+      summary: 장비 연결 모듈 명령 접수
+      tags: [장비]
+      security:
+      - controllerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceCommand'
+      responses:
+        '200':
+          description: 같은 요청의 종료 또는 결과 확인 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResult'
+        '202':
+          description: 신규 또는 진행 중
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResult'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - name: X-Expected-Boot-Id
+        in: header
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+        description: 수신 모듈이 현재 부팅 ID와 대조한다. 세대가 달라지면 409로 거절하고 현재 상태를 다시 조회한다.
+  /device/v1/commands/{command_id}:
+    get:
+      operationId: getDeviceCommand
+      summary: 장비 명령 결과 조회
+      tags: [장비]
+      security:
+      - controllerToken: []
+      parameters:
+      - in: path
+        name: command_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResult'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /device/v1/status:
+    get:
+      operationId: readDeviceStatus
+      summary: 장비 상태 조회
+      tags: [장비]
+      security:
+      - controllerToken: []
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceStatus'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+  /device/v1/events:
+    get:
+      operationId: replayDeviceEvents
+      summary: 지정 부팅 회차의 미수신 이벤트 복원
+      tags: [장비]
+      security:
+      - controllerToken: []
+      parameters:
+      - in: query
+        name: cursor
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      - in: query
+        name: boot_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      - in: query
+        name: after_seq
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      responses:
+        '200':
+          description: 조회 또는 처리 결과
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+components:
+  securitySchemes:
+    adminToken:
+      type: http
+      scheme: bearer
+      description: WPF 관리자 계정의 세션. 관리자 권한은 서버에서 확인한다.
+    deviceToken:
+      type: http
+      scheme: bearer
+      description: 이벤트 발행 장비 또는 메인 PC의 인증된 연결 모듈. 등록된 device_id와 대조한다.
+    controllerToken:
+      type: http
+      scheme: bearer
+      description: 단일 제어 주체인 메인 서버가 장비 연결 모듈을 호출할 때 사용한다.
+  schemas:
+    Id:
+      type: string
+      format: uuid
+    Utc:
+      type: string
+      format: date-time
+      pattern: Z$
+    PalletId:
+      type: string
+      pattern: ^PALLET-0[1-8]$
+    Hub:
+      type: integer
+      enum: [3, 4, 5]
+    Destination:
+      type: integer
+      enum: [3, 4, 5, 6, 7]
+    BuildSpec:
+      type: object
+      additionalProperties: false
+      properties:
+        target_head_id:
+          type: string
+          enum: [H1, H2]
+        target_arm_l_id:
+          type: string
+          enum: [L1, L2, L3]
+        target_arm_r_id:
+          type: string
+          enum: [R1, R2, R3]
+      required: [target_head_id, target_arm_l_id, target_arm_r_id]
+    SubmitOrder:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        company:
+          type: string
+          minLength: 1
+          maxLength: 100
+        phone:
+          type: string
+          minLength: 1
+          maxLength: 40
+        address:
+          type: string
+          minLength: 1
+          maxLength: 300
+        spec:
+          $ref: '#/components/schemas/BuildSpec'
+        payment_method:
+          type: string
+          enum: [card, transfer]
+      required: [request_id, company, phone, address, spec, payment_method]
+      examples:
+      - request_id: f82afe44-7f3c-4ff0-9a09-b248440556d2
+        company: 시연 회사
+        phone: 000-0000-0000
+        address: 광주광역시 서구 시연로 1
+        spec:
+          target_head_id: H1
+          target_arm_l_id: L1
+          target_arm_r_id: R1
+        payment_method: card
+    Request:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+      required: [request_id]
+    OrderLookup:
+      type: object
+      additionalProperties: false
+      properties:
+        order_id:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+      required: [order_id]
+    PublicCancel:
+      type: object
+      additionalProperties: false
+      properties:
+        order_id:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+        request_id:
+          $ref: '#/components/schemas/Id'
+      required: [order_id, request_id]
+    PublicOrder:
+      type: object
+      additionalProperties: false
+      properties:
+        order_id:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+        spec:
+          $ref: '#/components/schemas/BuildSpec'
+        target_station:
+          type: integer
+          enum: [3, 4, 5]
+        progress:
+          type: string
+          enum: [RECEIVED, IN_PRODUCTION, INSPECTING, SHIPPING, HUB_ARRIVED]
+        outcome:
+          type: string
+          enum: [OPEN, NORMAL, ERROR, CANCELLED]
+        updated_at:
+          $ref: '#/components/schemas/Utc'
+      required: [order_id, spec, target_station, progress, outcome, updated_at]
+      examples:
+      - order_id: 0e9b1d5e-00a7-4b34-9f11-316049eb2e5a
+        spec:
+          target_head_id: H1
+          target_arm_l_id: L1
+          target_arm_r_id: R1
+        target_station: 5
+        progress: RECEIVED
+        outcome: OPEN
+        updated_at: '2026-11-21T04:10:00Z'
+    OrderState:
+      type: string
+      enum: [PENDING, QUEUED, IN_PROGRESS, COMPLETED, CANCELLED, ERROR_DELIVERED]
+    AdminOrder:
+      type: object
+      additionalProperties: false
+      properties:
+        order_id:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+        spec:
+          $ref: '#/components/schemas/BuildSpec'
+        company:
+          type: string
+          minLength: 1
+          maxLength: 100
+        phone:
+          type: string
+          minLength: 1
+          maxLength: 40
+        address:
+          type: string
+          minLength: 1
+          maxLength: 300
+        target_station:
+          type: integer
+          enum: [3, 4, 5]
+        dispatch_station:
+          anyOf:
+          - type: integer
+            enum: [3, 4, 5, 6, 7]
+          - type: 'null'
+        factory_status:
+          $ref: '#/components/schemas/OrderState'
+        approval_seq:
+          anyOf:
+          - type: integer
+            minimum: 1
+          - type: 'null'
+        cycle_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        pallet_id:
+          anyOf:
+          - type: string
+            pattern: ^PALLET-0[1-8]$
+          - type: 'null'
+        created_at:
+          $ref: '#/components/schemas/Utc'
+        updated_at:
+          $ref: '#/components/schemas/Utc'
+      required: [order_id, spec, company, phone, address, target_station, dispatch_station, factory_status, approval_seq,
+        cycle_id, pallet_id, created_at, updated_at]
+    Pallet:
+      type: object
+      additionalProperties: false
+      properties:
+        pallet_id:
+          type: string
+          pattern: ^PALLET-0[1-8]$
+        cycle_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        stage:
+          type: string
+          minLength: 1
+          maxLength: 64
+        updated_at:
+          $ref: '#/components/schemas/Utc'
+      required: [pallet_id, cycle_id, stage, updated_at]
+    StockItem:
+      type: object
+      additionalProperties: false
+      properties:
+        stock_key:
+          type: string
+          enum: [H1, H2, ARM_1, ARM_2, ARM_3, BODY]
+        available_units:
+          type: integer
+          minimum: 0
+      required: [stock_key, available_units]
+    Restock:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        stock_key:
+          type: string
+          enum: [H1, H2, ARM_1, ARM_2, ARM_3, BODY]
+        added_units:
+          type: integer
+          minimum: 1
+      required: [request_id, stock_key, added_units]
+    Login:
+      type: object
+      additionalProperties: false
+      properties:
+        login_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          minLength: 1
+          writeOnly: true
+          format: password
+      required: [login_id, password]
+    Account:
+      type: object
+      additionalProperties: false
+      properties:
+        account_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+        role:
+          type: string
+          enum: [ADMIN, SUPER_ADMIN]
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+      required: [account_id, role, display_name]
+    Session:
+      type: object
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          minLength: 1
+        account:
+          $ref: '#/components/schemas/Account'
+      required: [token, account]
+    Error:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          enum: [BAD_REQUEST, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, STALE_CYCLE, BAD_TRANSITION, OUT_OF_STOCK,
+            INVALID_ADDRESS, DEVICE_UNAVAILABLE, RECONCILE_REQUIRED, STALE_CALIBRATION, INTERNAL_ERROR, RATE_LIMITED,
+            UNSUPPORTED_VERSION]
+        message:
+          type: string
+          minLength: 1
+          maxLength: 400
+        retry:
+          type: string
+          enum: [NONE, QUERY_FIRST, SAME_REQUEST, OPERATOR]
+        trace_id:
+          $ref: '#/components/schemas/Id'
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 40
+        cycle_id:
+          $ref: '#/components/schemas/Id'
+        command_id:
+          $ref: '#/components/schemas/Id'
+      required: [code, message, retry, trace_id]
+      examples:
+      - code: RECONCILE_REQUIRED
+        message: 하역 완료 여부를 확인하세요.
+        retry: OPERATOR
+        trace_id: f82afe44-7f3c-4ff0-9a09-b248440556d2
+        cycle_id: 72dd2d56-7363-4ca7-a48e-182c6f004ad9
+        command_id: cccf57f2-133b-4aab-ad45-18b8004b240a
+    Device:
+      type: string
+      enum: [LINE, ARM, AGV]
+    Producer:
+      type: string
+      enum: [LINE, ARM, AGV, VISION]
+    CommandState:
+      type: string
+      enum: [ACCEPTED, RUNNING, COMPLETED, FAILED, STOPPED, UNKNOWN]
+    Stage:
+      type: string
+      enum: [READY, DISPENSING, WAIT_FEED_QR, TO_ASSEMBLY, ASSEMBLING, TO_PICKUP, PICKING_UP, TO_INSPECTION, INSPECTING,
+        DELIVERING, UNLOADING, RETURNING, CLOSED]
+    DeviceStatus:
+      type: object
+      additionalProperties: false
+      properties:
+        device_id:
+          $ref: '#/components/schemas/Device'
+        boot_id:
+          $ref: '#/components/schemas/Id'
+        mode:
+          type: string
+          enum: [AUTO, MANUAL]
+        state:
+          type: string
+          enum: [IDLE, BUSY, PAUSED, FAULT, UNKNOWN]
+        cycle_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        active_command_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        last_completed_command_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        observed_at:
+          $ref: '#/components/schemas/Utc'
+        online:
+          type: boolean
+      required: [device_id, boot_id, mode, state, cycle_id, active_command_id, last_completed_command_id, observed_at,
+        online]
+    Plant:
+      type: object
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          enum: [NOT_READY, READY, RUNNING, PAUSING, PAUSED, RESUMING, RECOVERY_REQUIRED]
+        stage:
+          $ref: '#/components/schemas/Stage'
+        cycle_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceStatus'
+        camera_ready:
+          type: object
+          additionalProperties: false
+          properties:
+            cam1:
+              type: boolean
+            cam2:
+              type: boolean
+            cam3:
+              type: boolean
+            cam4:
+              type: boolean
+          required: [cam1, cam2, cam3, cam4]
+        updated_at:
+          $ref: '#/components/schemas/Utc'
+        feed_qr:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            properties:
+              read_id:
+                $ref: '#/components/schemas/Id'
+              attempt:
+                type: integer
+                minimum: 0
+                maximum: 3
+              state:
+                enum: [READING, UNREADABLE, SAVING, SAVE_FAILED, BOUND]
+            required: [read_id, attempt, state]
+          - type: 'null'
+      required: [state, stage, cycle_id, devices, camera_ready, updated_at, feed_qr]
+    PlantAction:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        action:
+          type: string
+          enum: [START, PAUSE, RESUME]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+      required: [request_id, action]
+      examples:
+      - request_id: f82afe44-7f3c-4ff0-9a09-b248440556d2
+        action: PAUSE
+        reason: 운영자 일시정지
+    PlantTicket:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        state:
+          $ref: '#/components/schemas/CommandState'
+        plant_state:
+          type: string
+          enum: [NOT_READY, READY, RUNNING, PAUSING, PAUSED, RESUMING, RECOVERY_REQUIRED]
+      required: [request_id, state, plant_state]
+    Pose:
+      type: object
+      additionalProperties: false
+      properties:
+        frame:
+          const: ROBOT_BASE
+        tool_frame:
+          const: GRIP_CENTER
+        calibration_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+        x_mm:
+          type: number
+        y_mm:
+          type: number
+        z_mm:
+          type: number
+        rx_deg:
+          type: number
+        ry_deg:
+          type: number
+        rz_deg:
+          type: number
+        captured_at:
+          $ref: '#/components/schemas/Utc'
+      required: [frame, tool_frame, calibration_id, x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg, captured_at]
+    PoseSet:
+      type: object
+      additionalProperties: false
+      properties:
+        spec:
+          $ref: '#/components/schemas/BuildSpec'
+        points:
+          type: object
+          additionalProperties: false
+          properties:
+            head_pick:
+              $ref: '#/components/schemas/Pose'
+            head_place:
+              $ref: '#/components/schemas/Pose'
+            left_pick:
+              $ref: '#/components/schemas/Pose'
+            left_place:
+              $ref: '#/components/schemas/Pose'
+            right_pick:
+              $ref: '#/components/schemas/Pose'
+            right_place:
+              $ref: '#/components/schemas/Pose'
+          required: [head_pick, head_place, left_pick, left_place, right_pick, right_place]
+      required: [spec, points]
+    DeviceCommand:
+      type: object
+      additionalProperties: false
+      properties:
+        command_id:
+          $ref: '#/components/schemas/Id'
+        device_id:
+          $ref: '#/components/schemas/Device'
+        cycle_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        action:
+          type: string
+          enum: [DISPENSE, MOVE_TO_ASSEMBLY, MOVE_TO_PICKUP, ASSEMBLE, PICK_UP, GO_TO_INSPECTION, DELIVER, UNLOAD, RETURN_STANDBY,
+            PAUSE, RESUME]
+        params:
+          type: object
+      required: [command_id, device_id, cycle_id, action, params]
+      allOf:
+      - if:
+          properties:
+            action:
+              const: DISPENSE
+        then:
+          properties:
+            device_id:
+              const: LINE
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            params:
+              type: object
+              additionalProperties: false
+              properties: {}
+              required: []
+      - if:
+          properties:
+            action:
+              const: MOVE_TO_ASSEMBLY
+        then:
+          properties:
+            device_id:
+              const: LINE
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            params:
+              type: object
+              additionalProperties: false
+              properties: {}
+              required: []
+      - if:
+          properties:
+            action:
+              const: MOVE_TO_PICKUP
+        then:
+          properties:
+            device_id:
+              const: LINE
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            params:
+              type: object
+              additionalProperties: false
+              properties: {}
+              required: []
+      - if:
+          properties:
+            action:
+              const: ASSEMBLE
+        then:
+          properties:
+            device_id:
+              const: ARM
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            params:
+              $ref: '#/components/schemas/PoseSet'
+      - if:
+          properties:
+            action:
+              const: PICK_UP
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            params:
+              type: object
+              additionalProperties: false
+              properties: {}
+              required: []
+      - if:
+          properties:
+            action:
+              const: GO_TO_INSPECTION
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            params:
+              type: object
+              additionalProperties: false
+              properties: {}
+              required: []
+      - if:
+          properties:
+            action:
+              const: DELIVER
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            params:
+              type: object
+              additionalProperties: false
+              properties:
+                destination:
+                  $ref: '#/components/schemas/Destination'
+                inspection_id:
+                  $ref: '#/components/schemas/Id'
+              required: [destination, inspection_id]
+      - if:
+          properties:
+            action:
+              const: UNLOAD
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            params:
+              type: object
+              additionalProperties: false
+              properties:
+                destination:
+                  $ref: '#/components/schemas/Destination'
+                inspection_id:
+                  $ref: '#/components/schemas/Id'
+              required: [destination, inspection_id]
+      - if:
+          properties:
+            action:
+              const: RETURN_STANDBY
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            params:
+              type: object
+              additionalProperties: false
+              properties: {}
+              required: []
+      - if:
+          properties:
+            action:
+              const: PAUSE
+        then:
+          properties:
+            params:
+              type: object
+              additionalProperties: false
+              properties: {}
+              required: []
+      - if:
+          properties:
+            action:
+              const: RESUME
+        then:
+          properties:
+            params:
+              type: object
+              additionalProperties: false
+              properties:
+                pause_command_id:
+                  $ref: '#/components/schemas/Id'
+              required: [pause_command_id]
+      examples:
+      - command_id: cccf57f2-133b-4aab-ad45-18b8004b240a
+        device_id: AGV
+        cycle_id: 72dd2d56-7363-4ca7-a48e-182c6f004ad9
+        action: GO_TO_INSPECTION
+        params: {}
+    CommandResult:
+      type: object
+      additionalProperties: false
+      properties:
+        command_id:
+          $ref: '#/components/schemas/Id'
+        cycle_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        device_id:
+          $ref: '#/components/schemas/Device'
+        state:
+          $ref: '#/components/schemas/CommandState'
+        updated_at:
+          $ref: '#/components/schemas/Utc'
+        result_event_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/Error'
+          - type: 'null'
+      required: [command_id, cycle_id, device_id, state, updated_at, result_event_id, error]
+      allOf:
+      - if:
+          properties:
+            state:
+              const: COMPLETED
+        then:
+          properties:
+            result_event_id:
+              $ref: '#/components/schemas/Id'
+            error:
+              type: 'null'
+      - if:
+          properties:
+            state:
+              const: FAILED
+        then:
+          properties:
+            error:
+              $ref: '#/components/schemas/Error'
+      - if:
+          properties:
+            state:
+              enum: [ACCEPTED, RUNNING]
+        then:
+          properties:
+            result_event_id:
+              type: 'null'
+            error:
+              type: 'null'
+      examples:
+      - command_id: cccf57f2-133b-4aab-ad45-18b8004b240a
+        device_id: AGV
+        cycle_id: 72dd2d56-7363-4ca7-a48e-182c6f004ad9
+        state: ACCEPTED
+        updated_at: '2026-11-21T04:10:00Z'
+        result_event_id: null
+        error: null
+      - command_id: cccf57f2-133b-4aab-ad45-18b8004b240a
+        device_id: AGV
+        cycle_id: 72dd2d56-7363-4ca7-a48e-182c6f004ad9
+        state: COMPLETED
+        updated_at: '2026-11-21T04:10:14Z'
+        result_event_id: 78af512d-da75-4d53-90ad-c1f74b2d4f90
+        error: null
+    VisionInspection:
+      type: object
+      additionalProperties: false
+      properties:
+        inspection_id:
+          $ref: '#/components/schemas/Id'
+        cycle_id:
+          $ref: '#/components/schemas/Id'
+        frame_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        captured_at:
+          $ref: '#/components/schemas/Utc'
+        image_ref:
+          type: string
+          minLength: 1
+          maxLength: 256
+        model_version:
+          type: string
+          minLength: 1
+          maxLength: 100
+        calibration_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+        qr_read:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 120
+          - type: 'null'
+        head:
+          type: object
+          additionalProperties: false
+          properties:
+            observation:
+              type: string
+              enum: [SEEN, MISSING, UNKNOWN]
+            observed_id:
+              anyOf:
+              - type: string
+                enum: [H1, H2, L1, L2, L3, R1, R2, R3]
+              - type: 'null'
+            confidence:
+              anyOf:
+              - type: number
+                minimum: 0
+                maximum: 1
+              - type: 'null'
+          required: [observation, observed_id, confidence]
+          allOf:
+          - if:
+              properties:
+                observation:
+                  const: SEEN
+            then:
+              properties:
+                observed_id:
+                  type: string
+                  enum: [H1, H2, L1, L2, L3, R1, R2, R3]
+            else:
+              properties:
+                observed_id:
+                  type: 'null'
+        left:
+          type: object
+          additionalProperties: false
+          properties:
+            observation:
+              type: string
+              enum: [SEEN, MISSING, UNKNOWN]
+            observed_id:
+              anyOf:
+              - type: string
+                enum: [H1, H2, L1, L2, L3, R1, R2, R3]
+              - type: 'null'
+            confidence:
+              anyOf:
+              - type: number
+                minimum: 0
+                maximum: 1
+              - type: 'null'
+          required: [observation, observed_id, confidence]
+          allOf:
+          - if:
+              properties:
+                observation:
+                  const: SEEN
+            then:
+              properties:
+                observed_id:
+                  type: string
+                  enum: [H1, H2, L1, L2, L3, R1, R2, R3]
+            else:
+              properties:
+                observed_id:
+                  type: 'null'
+        right:
+          type: object
+          additionalProperties: false
+          properties:
+            observation:
+              type: string
+              enum: [SEEN, MISSING, UNKNOWN]
+            observed_id:
+              anyOf:
+              - type: string
+                enum: [H1, H2, L1, L2, L3, R1, R2, R3]
+              - type: 'null'
+            confidence:
+              anyOf:
+              - type: number
+                minimum: 0
+                maximum: 1
+              - type: 'null'
+          required: [observation, observed_id, confidence]
+          allOf:
+          - if:
+              properties:
+                observation:
+                  const: SEEN
+            then:
+              properties:
+                observed_id:
+                  type: string
+                  enum: [H1, H2, L1, L2, L3, R1, R2, R3]
+            else:
+              properties:
+                observed_id:
+                  type: 'null'
+      required: [inspection_id, cycle_id, frame_id, captured_at, image_ref, model_version, calibration_id, qr_read, head,
+        left, right]
+      examples:
+      - inspection_id: e615e433-ade0-4230-9502-644bf5adf080
+        cycle_id: 72dd2d56-7363-4ca7-a48e-182c6f004ad9
+        frame_id: CAM3-0018
+        captured_at: '2026-11-21T04:10:15Z'
+        image_ref: inspection-image-0018
+        model_version: demo-model
+        calibration_id: demo-cal
+        qr_read: PALLET-04
+        head:
+          observation: SEEN
+          observed_id: H1
+          confidence: 0.96
+        left:
+          observation: MISSING
+          observed_id: null
+          confidence: null
+        right:
+          observation: SEEN
+          observed_id: R1
+          confidence: 0.96
+    Inspection:
+      type: object
+      additionalProperties: false
+      properties:
+        order_id:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+        inspection_id:
+          $ref: '#/components/schemas/Id'
+        cycle_id:
+          $ref: '#/components/schemas/Id'
+        expected_pallet_id:
+          type: string
+          pattern: ^PALLET-0[1-8]$
+        verdict:
+          type: string
+          enum: [PASS, PART_MISSING, MISMATCH, INDETERMINATE]
+        reasons:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [PART_MISSING, WRONG_PART, QR_MISMATCH, QR_UNREADABLE, OCCLUDED, NO_FRAME, LOW_CONFIDENCE]
+        dispatch_station:
+          type: integer
+          enum: [3, 4, 5, 6, 7]
+        captured_at:
+          anyOf:
+          - $ref: '#/components/schemas/Utc'
+          - type: 'null'
+        frame_id:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 128
+          - type: 'null'
+        image_ref:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+        archive_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      required: [order_id, inspection_id, cycle_id, expected_pallet_id, verdict, reasons, dispatch_station, captured_at,
+        frame_id, image_ref]
+      allOf:
+      - if:
+          properties:
+            verdict:
+              const: PASS
+        then:
+          properties:
+            dispatch_station:
+              type: integer
+              enum: [3, 4, 5]
+            reasons:
+              maxItems: 0
+        else:
+          properties:
+            reasons:
+              minItems: 1
+      - if:
+          properties:
+            verdict:
+              const: PART_MISSING
+        then:
+          properties:
+            dispatch_station:
+              const: 6
+            reasons:
+              contains:
+                const: PART_MISSING
+      - if:
+          properties:
+            verdict:
+              enum: [MISMATCH, INDETERMINATE]
+        then:
+          properties:
+            dispatch_station:
+              const: 7
+            reasons:
+              not:
+                contains:
+                  const: PART_MISSING
+      - if:
+          properties:
+            reasons:
+              contains:
+                const: NO_FRAME
+        then:
+          properties:
+            verdict:
+              const: INDETERMINATE
+            frame_id:
+              type: 'null'
+            image_ref:
+              type: 'null'
+            captured_at:
+              type: 'null'
+        else:
+          properties:
+            frame_id:
+              type: string
+              minLength: 1
+              maxLength: 128
+            image_ref:
+              type: string
+              minLength: 1
+              maxLength: 256
+            captured_at:
+              $ref: '#/components/schemas/Utc'
+      - if:
+          properties:
+            verdict:
+              const: MISMATCH
+        then:
+          properties:
+            reasons:
+              contains:
+                enum: [WRONG_PART, QR_MISMATCH]
+      - if:
+          properties:
+            verdict:
+              const: INDETERMINATE
+        then:
+          properties:
+            reasons:
+              contains:
+                enum: [LOW_CONFIDENCE, OCCLUDED, NO_FRAME, QR_UNREADABLE]
+      examples:
+      - order_id: 0e9b1d5e-00a7-4b34-9f11-316049eb2e5a
+        inspection_id: e615e433-ade0-4230-9502-644bf5adf080
+        cycle_id: 72dd2d56-7363-4ca7-a48e-182c6f004ad9
+        expected_pallet_id: PALLET-03
+        verdict: PART_MISSING
+        reasons: [PART_MISSING, QR_MISMATCH]
+        dispatch_station: 6
+        captured_at: '2026-11-21T04:10:15Z'
+        frame_id: CAM3-0018
+        image_ref: inspection-image-0018
+    DeviceEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        event_id:
+          $ref: '#/components/schemas/Id'
+        device_id:
+          $ref: '#/components/schemas/Producer'
+        boot_id:
+          $ref: '#/components/schemas/Id'
+        event_seq:
+          type: integer
+          minimum: 1
+        cycle_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        command_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        occurred_at:
+          $ref: '#/components/schemas/Utc'
+          description: 장비 UTC 시각. 시각 없는 UNO는 LINE 연결 모듈의 수신 UTC 시각을 사용한다.
+        kind:
+          type: string
+          enum: [PALLET_DISPENSED, ASSEMBLY_STATION_STOPPED, PICKUP_STATION_STOPPED, ARM_STANDBY_AFTER_ASSEMBLY, LIFT_FINISHED,
+            INSPECTION_ARRIVED, DESTINATION_ARRIVED, UNLOAD_FINISHED, STANDBY_RETURNED, FEED_QR_READ, INSPECTION_CAPTURED,
+            INSPECTION_UNAVAILABLE, DEVICE_PAUSED, DEVICE_RESUMED, DEVICE_FAILED]
+        data:
+          type: object
+      required: [event_id, device_id, boot_id, event_seq, cycle_id, command_id, occurred_at, kind, data]
+      allOf:
+      - if:
+          properties:
+            kind:
+              const: PALLET_DISPENSED
+        then:
+          properties:
+            device_id:
+              const: LINE
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                evidence:
+                  type: string
+                  enum: [SENSOR, TIMER, OPERATOR]
+              required: [evidence]
+      - if:
+          properties:
+            kind:
+              const: ASSEMBLY_STATION_STOPPED
+        then:
+          properties:
+            device_id:
+              const: LINE
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                ir1_detected:
+                  const: true
+                belt_command:
+                  type: string
+                  enum: [STOPPED]
+              required: [ir1_detected, belt_command]
+      - if:
+          properties:
+            kind:
+              const: PICKUP_STATION_STOPPED
+        then:
+          properties:
+            device_id:
+              const: LINE
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                ir2_detected:
+                  const: true
+                belt_command:
+                  const: STOPPED
+              required: [ir2_detected, belt_command]
+      - if:
+          properties:
+            kind:
+              const: ARM_STANDBY_AFTER_ASSEMBLY
+        then:
+          properties:
+            device_id:
+              const: ARM
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                standby_verified:
+                  const: true
+                assembly_steps_verified:
+                  const: true
+              required: [standby_verified, assembly_steps_verified]
+      - if:
+          properties:
+            kind:
+              const: LIFT_FINISHED
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                station:
+                  const: 1
+                fork_target_deg:
+                  const: 110
+                fork_moving:
+                  const: false
+              required: [station, fork_target_deg, fork_moving]
+      - if:
+          properties:
+            kind:
+              const: INSPECTION_ARRIVED
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                state:
+                  const: inspecting
+              required: [state]
+      - if:
+          properties:
+            kind:
+              const: DESTINATION_ARRIVED
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                destination:
+                  type: integer
+                  enum: [3, 4, 5, 6, 7]
+              required: [destination]
+      - if:
+          properties:
+            kind:
+              const: UNLOAD_FINISHED
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                destination:
+                  type: integer
+                  enum: [3, 4, 5, 6, 7]
+                fork_target_deg:
+                  const: 60
+                fork_moving:
+                  const: false
+              required: [destination, fork_target_deg, fork_moving]
+      - if:
+          properties:
+            kind:
+              const: STANDBY_RETURNED
+        then:
+          properties:
+            device_id:
+              const: AGV
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                station:
+                  const: 2
+                fork_target_deg:
+                  const: 85
+                fork_moving:
+                  const: false
+              required: [station, fork_target_deg, fork_moving]
+      - if:
+          properties:
+            kind:
+              const: FEED_QR_READ
+        then:
+          properties:
+            device_id:
+              const: VISION
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              type: 'null'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                frame_id:
+                  anyOf:
+                  - type: string
+                    minLength: 1
+                    maxLength: 100
+                  - type: 'null'
+                pallet_id:
+                  anyOf:
+                  - type: string
+                    pattern: ^PALLET-0[1-8]$
+                  - type: 'null'
+                attempt:
+                  type: integer
+                  minimum: 1
+                  maximum: 3
+                read_id:
+                  $ref: '#/components/schemas/Id'
+              required: [frame_id, pallet_id, attempt, read_id]
+              allOf:
+              - if:
+                  properties:
+                    frame_id:
+                      const: null
+                then:
+                  properties:
+                    pallet_id:
+                      type: 'null'
+      - if:
+          properties:
+            kind:
+              const: INSPECTION_CAPTURED
+        then:
+          properties:
+            device_id:
+              const: VISION
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              type: 'null'
+            data:
+              $ref: '#/components/schemas/VisionInspection'
+      - if:
+          properties:
+            kind:
+              const: INSPECTION_UNAVAILABLE
+        then:
+          properties:
+            device_id:
+              const: VISION
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              type: 'null'
+            data:
+              type: object
+              additionalProperties: false
+              properties:
+                inspection_id:
+                  $ref: '#/components/schemas/Id'
+                reason:
+                  const: NO_FRAME
+              required: [inspection_id, reason]
+      - if:
+          properties:
+            kind:
+              const: DEVICE_PAUSED
+        then:
+          properties:
+            device_id:
+              $ref: '#/components/schemas/Device'
+            command_id:
+              $ref: '#/components/schemas/Id'
+          allOf:
+          - if:
+              properties:
+                device_id:
+                  const: LINE
+            then:
+              properties:
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    belt_output_stopped:
+                      const: true
+                    actuator_output_stopped:
+                      const: true
+                  required: [belt_output_stopped, actuator_output_stopped]
+          - if:
+              properties:
+                device_id:
+                  const: ARM
+            then:
+              properties:
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    arm_motion_stopped:
+                      const: true
+                  required: [arm_motion_stopped]
+          - if:
+              properties:
+                device_id:
+                  const: AGV
+            then:
+              properties:
+                data:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    drive_stopped:
+                      const: true
+                    fork_motion_stopped:
+                      const: true
+                  required: [drive_stopped, fork_motion_stopped]
+      - if:
+          properties:
+            kind:
+              const: DEVICE_RESUMED
+        then:
+          properties:
+            device_id:
+              $ref: '#/components/schemas/Device'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              type: object
+              additionalProperties: false
+              properties: {}
+              required: []
+      - if:
+          properties:
+            kind:
+              const: DEVICE_FAILED
+        then:
+          properties:
+            device_id:
+              $ref: '#/components/schemas/Device'
+            data:
+              $ref: '#/components/schemas/Error'
+      examples:
+      - event_id: 78af512d-da75-4d53-90ad-c1f74b2d4f90
+        device_id: AGV
+        boot_id: d7645267-f6a5-42f9-9918-5a591ea74301
+        event_seq: 18
+        cycle_id: 72dd2d56-7363-4ca7-a48e-182c6f004ad9
+        command_id: cccf57f2-133b-4aab-ad45-18b8004b240a
+        occurred_at: '2026-11-21T04:10:14Z'
+        kind: INSPECTION_ARRIVED
+        data:
+          state: inspecting
+      - event_id: 0296c121-b2cd-4374-8765-7f0f047ab7ed
+        device_id: VISION
+        boot_id: be98d5f2-f621-4a12-9eed-72b09c5b3b8f
+        event_seq: 3
+        cycle_id: 72dd2d56-7363-4ca7-a48e-182c6f004ad9
+        command_id: null
+        occurred_at: '2026-11-21T04:10:15Z'
+        kind: INSPECTION_CAPTURED
+        data:
+          inspection_id: e615e433-ade0-4230-9502-644bf5adf080
+          cycle_id: 72dd2d56-7363-4ca7-a48e-182c6f004ad9
+          frame_id: CAM3-0018
+          captured_at: '2026-11-21T04:10:15Z'
+          image_ref: inspection-image-0018
+          model_version: demo-model
+          calibration_id: demo-cal
+          qr_read: PALLET-04
+          head:
+            observation: SEEN
+            observed_id: H1
+            confidence: 0.96
+          left:
+            observation: MISSING
+            observed_id: null
+            confidence: null
+          right:
+            observation: SEEN
+            observed_id: R1
+            confidence: 0.96
+    EventAck:
+      type: object
+      additionalProperties: false
+      properties:
+        event_id:
+          $ref: '#/components/schemas/Id'
+        disposition:
+          type: string
+          enum: [RECORDED, DUPLICATE, HELD_FOR_REVIEW]
+      required: [event_id, disposition]
+    HistoryEntry:
+      type: object
+      additionalProperties: false
+      properties:
+        record_id:
+          $ref: '#/components/schemas/Id'
+        order_id:
+          $ref: '#/components/schemas/Id'
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+        cycle_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        command_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        inspection_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        recorded_at:
+          $ref: '#/components/schemas/Utc'
+        stage:
+          $ref: '#/components/schemas/Stage'
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 60
+        message:
+          type: string
+          minLength: 1
+          maxLength: 400
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/Error'
+          - type: 'null'
+        device_id:
+          anyOf:
+          - $ref: '#/components/schemas/Producer'
+          - type: 'null'
+        archive_id:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        last_normal_stage:
+          anyOf:
+          - $ref: '#/components/schemas/Stage'
+          - type: 'null'
+        operator_action:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 400
+          - type: 'null'
+        pallet_id:
+          anyOf:
+          - $ref: '#/components/schemas/PalletId'
+          - type: 'null'
+      required: [record_id, order_id, cycle_id, command_id, inspection_id, recorded_at, stage, kind, message]
+      allOf:
+      - if:
+          required: [error]
+          properties:
+            error:
+              type: object
+        then:
+          required: [device_id, last_normal_stage, operator_action]
+    QrRetry:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        action:
+          type: string
+          enum: [READ_QR, SAVE_BINDING]
+        previous_read_id:
+          $ref: '#/components/schemas/Id'
+      required: [request_id, action, previous_read_id]
+      examples:
+      - request_id: f82afe44-7f3c-4ff0-9a09-b248440556d2
+        action: SAVE_BINDING
+        previous_read_id: d7c90bba-964b-4741-86a1-feb96204c477
+    QrTicket:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        cycle_id:
+          $ref: '#/components/schemas/Id'
+        state:
+          $ref: '#/components/schemas/CommandState'
+        read_id:
+          $ref: '#/components/schemas/Id'
+      required: [request_id, cycle_id, state, read_id]
+    OrderPage:
+      type: object
+      additionalProperties: false
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminOrder'
+        next_cursor:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+      required: [orders, next_cursor]
+    PalletPage:
+      type: object
+      additionalProperties: false
+      properties:
+        pallets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pallet'
+        next_cursor:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+      required: [pallets, next_cursor]
+    StockPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockItem'
+        next_cursor:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+      required: [items, next_cursor]
+    HistoryPage:
+      type: object
+      additionalProperties: false
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoryEntry'
+        next_cursor:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+      required: [events, next_cursor]
+    EventPage:
+      type: object
+      additionalProperties: false
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeviceEvent'
+        next_cursor:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+          description: 불투명한 페이지 커서. 재시작 전후 조회 구간은 boot_id로 한정한다.
+      required: [events, next_cursor]
+    OrderOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        heads:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              id:
+                type: string
+                enum: [H1, H2]
+              available_units:
+                type: integer
+                minimum: 0
+            required: [id, available_units]
+        arms:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              left_code:
+                type: string
+                enum: [L1, L2, L3]
+              right_code:
+                type: string
+                enum: [R1, R2, R3]
+              shared_units:
+                type: integer
+                minimum: 0
+            required: [left_code, right_code, shared_units]
+        body_available:
+          type: boolean
+      required: [heads, arms, body_available]
+    Reconcile:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        observation:
+          type: string
+          enum: [COMPLETED, NOT_EXECUTED, UNRESOLVED]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 300
+        evidence_ref:
+          type: string
+          minLength: 1
+          maxLength: 256
+      required: [request_id, observation, reason]
+    ReconcileResult:
+      type: object
+      additionalProperties: false
+      properties:
+        command_id:
+          $ref: '#/components/schemas/Id'
+        resolution:
+          type: string
+          enum: [COMPLETED, NOT_EXECUTED, UNRESOLVED]
+        requires_review:
+          type: boolean
+        recorded_at:
+          $ref: '#/components/schemas/Utc'
+      required: [command_id, resolution, requires_review, recorded_at]
+    ManualRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        device_id:
+          $ref: '#/components/schemas/Device'
+        procedure_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+      required: [request_id, device_id, procedure_id, reason]
+    ManualResult:
+      type: object
+      additionalProperties: false
+      properties:
+        command_id:
+          $ref: '#/components/schemas/Id'
+        device_id:
+          $ref: '#/components/schemas/Device'
+        state:
+          $ref: '#/components/schemas/CommandState'
+      required: [command_id, device_id, state]
+    AccountPage:
+      type: object
+      additionalProperties: false
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Account'
+        next_cursor:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 256
+          - type: 'null'
+      required: [accounts, next_cursor]
+    AccountCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        login_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        role:
+          type: string
+          enum: [ADMIN, SUPER_ADMIN]
+        initial_password:
+          type: string
+          minLength: 1
+          writeOnly: true
+      required: [request_id, login_id, display_name, role, initial_password]
+    RoleUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        role:
+          type: string
+          enum: [ADMIN, SUPER_ADMIN]
+      required: [request_id, role]
+    MetricQuery:
+      type: object
+      additionalProperties: false
+      properties:
+        from_utc:
+          $ref: '#/components/schemas/Utc'
+        to_utc:
+          $ref: '#/components/schemas/Utc'
+      required: [from_utc, to_utc]
+    Settlement:
+      type: object
+      additionalProperties: false
+      properties:
+        from_utc:
+          $ref: '#/components/schemas/Utc'
+        to_utc:
+          $ref: '#/components/schemas/Utc'
+        sales_units:
+          type: integer
+          minimum: 0
+        sales_krw:
+          type: integer
+          minimum: 0
+        missing_cases:
+          type: integer
+          minimum: 0
+        mismatch_cases:
+          type: integer
+          minimum: 0
+        policy_version:
+          type: string
+          minLength: 1
+          maxLength: 128
+      required: [from_utc, to_utc, sales_units, sales_krw, missing_cases, mismatch_cases, policy_version]
+    Setting:
+      type: object
+      additionalProperties: false
+      properties:
+        device_id:
+          $ref: '#/components/schemas/Device'
+        profile_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: integer
+          minimum: 1
+        updated_at:
+          $ref: '#/components/schemas/Utc'
+      required: [device_id, profile_id, revision, updated_at]
+    SettingChange:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        device_id:
+          $ref: '#/components/schemas/Device'
+        validated_profile_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        expected_revision:
+          type: integer
+          minimum: 1
+      required: [request_id, device_id, validated_profile_id, expected_revision]
+    ArchiveDelete:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 300
+      required: [request_id, reason]
+    Deletion:
+      type: object
+      additionalProperties: false
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Id'
+        record_id:
+          $ref: '#/components/schemas/Id'
+        deleted_at:
+          $ref: '#/components/schemas/Utc'
+      required: [request_id, record_id, deleted_at]
+  responses:
+    Error400:
+      description: 요청 형식·필드 오류
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Error500:
+      description: 서버 내부 오류
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Error503:
+      description: 서버·DB 또는 장비 사용 불가
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Error409:
+      description: 중복 ID의 내용 충돌 또는 현재 단계에서 처리 불가
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Error422:
+      description: 사양·주소·부품·보정값 오류
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Error429:
+      description: 요청 빈도 초과
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Error401:
+      description: 인증 실패 또는 세션 철회
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Error403:
+      description: 권한 또는 등록 장비 불일치
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Error404:
+      description: 없는 자원 또는 공개 조회 불가
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
