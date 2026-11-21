@@ -20,15 +20,15 @@ CARD_ISSUERS = {
     "ibk": "IBK기업은행",
 }
 SCHEMA_PATH = Path(__file__).with_name("smart_factory_sqlite.sql")
-HEAD_CODES = {"dual": "A", "mono": "B"}
-LEFT_CODES = {"grip": "a", "weld": "b", "fasten": "c"}
-RIGHT_CODES = {"grip": "1", "weld": "2", "fasten": "3"}
-HEAD_OPTIONS = {f"head-{part}": option for option, part in HEAD_CODES.items()}
-LEFT_OPTIONS = {f"arm-{part}": option for option, part in LEFT_CODES.items()}
-RIGHT_OPTIONS = {f"arm-{part}": option for option, part in RIGHT_CODES.items()}
-LEGACY_HEAD_IDS = {"H1": "head-A", "H2": "head-B"}
-LEGACY_LEFT_IDS = {"L1": "arm-a", "L2": "arm-b", "L3": "arm-c"}
-LEGACY_RIGHT_IDS = {"R1": "arm-1", "R2": "arm-2", "R3": "arm-3"}
+HEAD_CODES = {"dual": "H1", "mono": "H2"}
+LEFT_CODES = {"grip": "L1", "weld": "L2", "fasten": "L3"}
+RIGHT_CODES = {"grip": "R1", "weld": "R2", "fasten": "R3"}
+HEAD_OPTIONS = {part: option for option, part in HEAD_CODES.items()}
+LEFT_OPTIONS = {part: option for option, part in LEFT_CODES.items()}
+RIGHT_OPTIONS = {part: option for option, part in RIGHT_CODES.items()}
+LEGACY_HEAD_IDS = {"head-A": "H1", "head-B": "H2"}
+LEGACY_LEFT_IDS = {"arm-a": "L1", "arm-b": "L2", "arm-c": "L3"}
+LEGACY_RIGHT_IDS = {"arm-1": "R1", "arm-2": "R2", "arm-3": "R3"}
 PART_ID_UPDATES = (
     ("ORDERS", "target_head_id", LEGACY_HEAD_IDS),
     ("ORDERS", "target_arm_l_id", LEGACY_LEFT_IDS),
@@ -77,6 +77,7 @@ def initialize_orders(path):
     schema = SCHEMA_PATH.read_text(encoding="utf-8-sig")
     with closing(connect(path)) as db, db:
         migrate_agv_destinations(db)
+        migrate_remote_modes(db)
         # Execute complete SQL statements individually so the schema and any
         # legacy migration share one transaction, including the table rename.
         db.execute("BEGIN IMMEDIATE")
@@ -114,12 +115,40 @@ def initialize_orders(path):
                 f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
                 ((new_id, old_id) for old_id, new_id in replacements.items()),
             )
+        db.execute("""UPDATE ORDERS SET model_name=target_head_id || '-' || target_arm_l_id || '-' || target_arm_r_id
+            WHERE target_head_id IN ('H1','H2') AND target_arm_l_id IN ('L1','L2','L3')
+            AND target_arm_r_id IN ('R1','R2','R3')""")
 
         number = next_order_number(db)
         for row in db.execute("SELECT job_id FROM ORDERS ORDER BY julianday(created_at), job_id").fetchall():
             if not re.fullmatch(r"mobot-[1-9][0-9]*", row["job_id"]):
                 db.execute("UPDATE ORDERS SET job_id = ? WHERE job_id = ?", (f"mobot-{number}", row["job_id"]))
                 number += 1
+
+
+def migrate_remote_modes(db):
+    row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='EQUIPMENT_RUNS'").fetchone()
+    if not row or "CHECK (mode = 'DEMO')" not in row['sql']:
+        return
+    indexes = db.execute("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='EQUIPMENT_RUNS' AND sql IS NOT NULL").fetchall()
+    db.execute('PRAGMA foreign_keys=OFF')
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        sql = row['sql'].replace('CREATE TABLE EQUIPMENT_RUNS', 'CREATE TABLE EQUIPMENT_RUNS_NEW', 1).replace("CHECK (mode = 'DEMO')", "CHECK (mode IN ('DEMO', 'REMOTE'))")
+        db.execute(sql)
+        db.execute('INSERT INTO EQUIPMENT_RUNS_NEW SELECT * FROM EQUIPMENT_RUNS')
+        db.execute('DROP TABLE EQUIPMENT_RUNS')
+        db.execute('ALTER TABLE EQUIPMENT_RUNS_NEW RENAME TO EQUIPMENT_RUNS')
+        for index in indexes:
+            db.execute(index['sql'])
+        if db.execute('PRAGMA foreign_key_check').fetchall():
+            raise sqlite3.IntegrityError('원격 장비 스키마 변경 후 외래키 검사 실패')
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.execute('PRAGMA foreign_keys=ON')
 
 
 def migrate_agv_destinations(db):
@@ -172,10 +201,10 @@ def order_values(order, order_id, created_at, request_id):
     head = HEAD_CODES[order["head"]]
     left = LEFT_CODES[order["left"]]
     right = RIGHT_CODES[order["right"]]
-    model_name = f"{head}{right}{left}"
+    model_name = f"{head}-{left}-{right}"
     return (
-        order_id, order["company"], order["phone"], order["address"], f"head-{head}",
-        f"arm-{left}", f"arm-{right}", model_name, destination_for(order["address"]), created_at, request_id,
+        order_id, order["company"], order["phone"], order["address"], head,
+        left, right, model_name, destination_for(order["address"]), created_at, request_id,
         *(order[field] if field in order.keys() else None for field in PAYMENT_FIELDS),
     )
 
@@ -232,6 +261,8 @@ def create_order_api(heads, arms):
 
         for slot, allowed in options.items():
             value = payload.get(slot)
+            if isinstance(value,str):
+                value = {"head":HEAD_OPTIONS,"left":LEFT_OPTIONS,"right":RIGHT_OPTIONS}[slot].get(value,value)
             if not isinstance(value, str) or value not in allowed:
                 return {"error": "선택한 모듈을 확인해 주세요.", "field": slot}, 400
             order[slot] = value

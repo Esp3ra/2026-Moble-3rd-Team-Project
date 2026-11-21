@@ -34,7 +34,10 @@ class CameraFeed:
             self.bench.jpeg = None
             if first_failure:
                 self.bench.event('CAMERA_ERROR', message=message)
-            from controller import ACTIVE
+            if __package__:
+                from .controller import ACTIVE
+            else:
+                from controller import ACTIVE
             if self.bench.state in ACTIVE:
                 self.bench.abort('카메라 오류: ' + message)
         with self.condition:

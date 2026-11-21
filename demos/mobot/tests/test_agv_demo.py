@@ -58,6 +58,7 @@ class AgvTests(unittest.TestCase):
         self.path = self.root/'test.sqlite3'
         with patch.dict(os.environ, {'MOBOT_DB':str(self.path),'MOBOT_ADMIN_TOKEN':''}):
             self.app = create_app()
+        self.app.config.update(LEGACY_API_ENABLED=True,V1_BACKGROUND=False)
         with closing(connect(self.path)) as db, db:
             self.account = db.execute("INSERT INTO ACCOUNTS(role_id,login_id,password_hash,name) VALUES(2,'test',?,'검증')",(HASH,)).lastrowid
         self.client = self.app.test_client()

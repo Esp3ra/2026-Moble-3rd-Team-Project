@@ -1,68 +1,23 @@
-using System.Windows.Controls;
 using System.Windows;
+using System.Windows.Controls;
 using RobotFactory.Admin.ViewModels;
 namespace RobotFactory.Admin.Views;
-public partial class DashboardView : UserControl
+public partial class DashboardView:UserControl
 {
-    public DashboardView()
-    {
-        InitializeComponent();
-        Loaded += async (_, _) =>
-        {
-            if (DataContext is DashboardViewModel model)
-            {
-                await model.StartAsync();
-            }
-        };
-        Unloaded += (_, _) => (DataContext as DashboardViewModel)?.Stop();
-    }
-
-    private async void Refresh_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is DashboardViewModel model) await model.RefreshAsync();
-    }
-
-    private async void DropOrder_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is not DashboardViewModel model || !model.CanDropOrder || model.SelectedOrder is not { } order)
-            return;
-        var choice = MessageBox.Show(Window.GetWindow(this),
-            $"{order.Company}\n{order.Id}\n\n선택한 주문을 취소하고 목록에서 제외할까요? 주문 기록은 DB에 보관됩니다.",
-            "주문 드롭", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
-        if (choice == MessageBoxResult.Yes) await model.DropOrderAsync(order);
-    }
-
-    private async void StartAgv_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is DashboardViewModel model) await model.StartAgvAsync();
-    }
-    private async void StopAgv_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is DashboardViewModel model) await model.StopAgvAsync();
-    }
-
-    private async void StartEquipment_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is DashboardViewModel model) await model.StartEquipmentAsync();
-    }
-
-    private async void StopEquipment_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is DashboardViewModel model) await model.StopEquipmentAsync();
-    }
-
-    private async void ConfirmEquipment_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is DashboardViewModel model) await model.ConfirmEquipmentAsync();
-    }
-
-    private async void RetryEquipment_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is DashboardViewModel model) await model.RetryEquipmentDatabaseAsync();
-    }
-
-    private async void ApplyEquipmentTimings_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is DashboardViewModel model) await model.ApplyEquipmentTimingsAsync();
-    }
+ public DashboardView(){InitializeComponent();Loaded+=async(_,_)=>{if(DataContext is DashboardViewModel m)await m.StartAsync();};Unloaded+=(_,_)=>Model?.Stop();}
+ private DashboardViewModel? Model=>DataContext as DashboardViewModel;
+ private async void Reconcile_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.ReconcileAsync();}
+ private async void Image_Click(object s,RoutedEventArgs e){if(Model is {} m && await m.InspectionImageAsync() is {} image)new Window{Title="보관 검사 사진",Width=900,Height=700,Owner=Window.GetWindow(this),Content=new Image{Source=image,Stretch=System.Windows.Media.Stretch.Uniform}}.Show();}
+ private async void DeleteImage_Click(object s,RoutedEventArgs e){if(Model is {} m && MessageBox.Show(Window.GetWindow(this),"선택한 보관 검사 사진을 삭제할까요?","사진 삭제",MessageBoxButton.YesNo)==MessageBoxResult.Yes)await m.DeleteImageAsync();}
+ private async void Accept_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.AcceptAsync();}
+ private async void Cancel_Click(object s,RoutedEventArgs e){if(Model is {} m && MessageBox.Show(Window.GetWindow(this),"선택 주문을 취소하고 재고를 복구할까요?","주문 취소",MessageBoxButton.YesNo)==MessageBoxResult.Yes)await m.CancelAsync();}
+ private async void Start_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.PlantActionAsync("START");}
+ private async void Pause_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.PlantActionAsync("PAUSE");}
+ private async void Resume_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.PlantActionAsync("RESUME");}
+ private async void ReadQr_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.RetryQrAsync("READ_QR");}
+ private async void SaveQr_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.RetryQrAsync("SAVE_BINDING");}
+ private async void More_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.LoadMoreAsync();}
+ private async void Restock_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.RestockAsync();}
+ private async void CreateAccount_Click(object s,RoutedEventArgs e){var password=NewPassword.Password;NewPassword.Clear();if(Model is {} m)await m.CreateAccountAsync(password);}
+ private async void ChangeRole_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.ChangeRoleAsync();}
 }

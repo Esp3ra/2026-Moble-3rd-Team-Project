@@ -28,6 +28,7 @@ class EquipmentDemoTests(unittest.TestCase):
         self.path = self.root / 'factory.sqlite3'
         with patch.dict(os.environ, {'MOBOT_DB': str(self.path), 'MOBOT_ADMIN_TOKEN': ''}):
             self.app = create_app()
+        self.app.config.update(LEGACY_API_ENABLED=True,V1_BACKGROUND=False)
         with closing(connect(self.path)) as db, db:
             db.executemany('INSERT INTO ACCOUNTS(role_id,login_id,password_hash,name) VALUES(2,?,?,?)',
                            [('operator-a', PASSWORD_HASH, '운영자 A'), ('operator-b', PASSWORD_HASH, '운영자 B')])

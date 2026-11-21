@@ -88,7 +88,7 @@ AGV 상태의 주요 필드:
 
 ```powershell
 .\.venv\Scripts\python.exe -B -m unittest discover -s tests
-dotnet build ..\..\WPF\RobotFactory.sln -c Release
+dotnet build .\WPF\RobotFactory.sln -c Release
 ```
 
 ## 실제 ESP32 연결에 남은 작업

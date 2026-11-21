@@ -165,7 +165,7 @@ SQLite `BEGIN IMMEDIATE`와 미종료 회차의 장비별 유일 인덱스로 �
 
 ```powershell
 .\.venv\Scripts\python.exe -B -m unittest discover -s tests
-dotnet build ..\..\WPF\RobotFactory.sln -c Release
+dotnet build .\WPF\RobotFactory.sln -c Release
 ```
 
 장비 모듈의 기존 테스트는 해당 모듈 폴더를 작업 디렉터리로 실행해야 한다. 별도 테스트 환경에 `pallet_system_uno_sim/requirements.txt` 의존성을 설치한 후 `python -B -m unittest discover -s tests`로 실행한다. 두 폴더 모두 `app.py`가 있으므로 루트에서 장비 테스트를 그대로 실행하면 import 대상이 달라진다.

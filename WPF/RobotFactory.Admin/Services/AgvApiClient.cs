@@ -41,7 +41,7 @@ public sealed record AgvState
 }
 public sealed class AgvApiClient
 {
-    private static readonly HttpClient Client = ApiConnection.CreateClient(TimeSpan.FromSeconds(3));
+    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(3) };
     private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
     private sealed record ApiError([property: JsonPropertyName("error")] string? Error);
     public async Task<AgvState> RequestAsync(Uri server, string token, string action, object? payload, CancellationToken cancellation)

@@ -47,6 +47,7 @@ public sealed record EquipmentTimings
 
 public sealed record EquipmentState
 {
+    public string HardwareMode { get; init; } = "DEMO";
     public string Mode { get; init; } = "DEMO";
     public string State { get; init; } = "IDLE";
     public string Error { get; init; } = "";
@@ -64,7 +65,7 @@ public sealed record EquipmentState
 
 public sealed class EquipmentApiClient
 {
-    private static readonly HttpClient Client = ApiConnection.CreateClient(TimeSpan.FromSeconds(5));
+    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(5) };
     private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
     private sealed record ApiError([property: JsonPropertyName("error")] string? Error);
 
@@ -114,7 +115,7 @@ public sealed class EquipmentApiClient
     private static async Task<EquipmentState> ReadStateAsync(HttpResponseMessage response, CancellationToken cancellation)
     {
         var state = await response.Content.ReadFromJsonAsync<EquipmentState>(Options, cancellation);
-        if (state is null || state.Mode != "DEMO" || state.Trial is null || state.Timings is null ||
+        if (state is null || state.Mode is not ("DEMO" or "REMOTE") || state.Trial is null || state.Timings is null ||
             state.Timings.Values is null || state.Events is null || state.Events.Any(item => item is null) || string.IsNullOrWhiteSpace(state.State))
             throw new JsonException("장비 상태 응답 형식이 올바르지 않습니다.");
         return state;

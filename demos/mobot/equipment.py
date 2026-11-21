@@ -324,6 +324,9 @@ def create_equipment_api():
         return {'error': '장비 DB 조회 실패: ' + str(error)}, 503
 
     def service():
+        if current_app.config.get('EQUIPMENT_MODE')=='REMOTE':
+            from remote_equipment import get_remote
+            return get_remote(current_app)
         with creation_lock:
             existing = current_app.extensions.get('uno_demo')
             if existing is None:
@@ -349,9 +352,13 @@ def create_equipment_api():
     @api.get('/frame.jpg')
     @admin_required
     def frame():
-        bench = service().bench
-        with bench.lock:
-            image = bench.jpeg
+        equipment = service()
+        if hasattr(equipment,'get_frame'):
+            image=equipment.get_frame()
+        else:
+            bench=equipment.bench
+            with bench.lock:
+                image = bench.jpeg
         return Response(image, mimetype='image/jpeg') if image else Response(status=503)
 
     @api.post('/<action>')

@@ -1,138 +1,89 @@
 <UserControl x:Class="RobotFactory.Admin.Views.DashboardView"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
  <Grid>
-  <Grid.RowDefinitions><RowDefinition Height="28" /><RowDefinition Height="48" /><RowDefinition Height="84" /><RowDefinition Height="*" /><RowDefinition Height="128" /><RowDefinition Height="20" /></Grid.RowDefinitions>
-  <ItemsControl ItemsSource="{Binding Connections}" Margin="6,0">
-   <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-   <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Foreground="{StaticResource Muted}" FontSize="14" VerticalAlignment="Center" /></DataTemplate></ItemsControl.ItemTemplate>
-  </ItemsControl>
-  <Grid Grid.Row="1" Margin="0,0,0,10">
-   <Grid.ColumnDefinitions><ColumnDefinition Width="340" /><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /></Grid.ColumnDefinitions>
-   <StackPanel VerticalAlignment="Center"><TextBlock Text="{Binding EquipmentSummary}" FontSize="15" FontWeight="SemiBold" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding EquipmentSummary}" /><TextBlock Text="{Binding EquipmentSensorStatus}" Style="{StaticResource MutedText}" FontSize="12" TextWrapping="NoWrap" /></StackPanel>
-   <UniformGrid Grid.Column="1" Rows="1" Margin="20,0,10,0">
-    <TextBlock Text="myCobot · 미연결" /><TextBlock Text="{Binding EquipmentNotice}" FontSize="13" /><TextBlock Text="{Binding AgvSummary}" FontSize="13" />
-   </UniformGrid>
-   <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-    <Button Content="■ 데모 전체 정지" Click="StopEquipment_Click" IsEnabled="{Binding CanStopEquipment}" Foreground="#AB2838" />
-   </StackPanel>
+  <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="62"/><RowDefinition Height="*"/><RowDefinition Height="128"/><RowDefinition Height="20"/></Grid.RowDefinitions>
+  <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <TextBlock Text="{Binding ConnectionStatus}" FontSize="13"/><TextBlock Grid.Column="1" Text="{Binding EnvironmentLabel}" Foreground="#885500" FontSize="13"/>
   </Grid>
-  <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,0,0,10" Padding="10,6">
-   <Grid><Grid.RowDefinitions><RowDefinition Height="30" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="50" /><ColumnDefinition Width="300" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-     <TextBlock Text="서버" FontSize="13" /><TextBlock Grid.Column="1" Text="{Binding ServerAddress}" FontSize="13" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
-     <TextBlock Grid.Column="2" Text="{Binding ConnectionStatus}" FontSize="12" Foreground="{StaticResource Muted}" Margin="10,0" />
-     <Button Grid.Column="3" Content="새로고침" Click="Refresh_Click" Margin="10,0,0,0" MinHeight="28" Padding="10,3" FontSize="13" />
-    </Grid>
-    <ItemsControl Grid.Row="1" ItemsSource="{Binding ProcessSteps}">
-     <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-     <ItemsControl.ItemTemplate><DataTemplate><Border Background="#EDF1F6" Margin="0,2,8,0" CornerRadius="4"><TextBlock Text="{Binding}" FontSize="12" HorizontalAlignment="Center" /></Border></DataTemplate></ItemsControl.ItemTemplate>
+  <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,10" Padding="10,5">
+   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="360"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <StackPanel><TextBlock Text="{Binding Summary}" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="{Binding CycleInfo}" FontSize="11"/></StackPanel>
+    <ItemsControl Grid.Column="1" ItemsSource="{Binding Plant.Devices}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Rows="1"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+     <ItemsControl.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding DeviceId}" FontWeight="SemiBold" FontSize="13"/><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding State}" FontSize="12"/><TextBlock Text="{Binding Online,StringFormat=' · 온라인 {0}'}" FontSize="12"/></StackPanel></StackPanel></DataTemplate></ItemsControl.ItemTemplate>
     </ItemsControl>
+    <StackPanel Grid.Column="2" Orientation="Horizontal">
+     <Button Content="자동 운전 시작" Click="Start_Click" IsEnabled="{Binding CanStart}" Margin="5,0"/>
+     <Button Content="전체 공정 정지" Click="Pause_Click" IsEnabled="{Binding CanPause}" Foreground="#AB2838" Margin="5,0"/>
+     <Button Content="정지 해제" Click="Resume_Click" IsEnabled="{Binding CanResume}" Margin="5,0"/>
+    </StackPanel>
    </Grid>
   </Border>
-  <Grid Grid.Row="3" Margin="0,0,0,10">
-   <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="10" /><ColumnDefinition Width="1.2*" /><ColumnDefinition Width="10" /><ColumnDefinition Width="*" /><ColumnDefinition Width="10" /><ColumnDefinition Width="300" /></Grid.ColumnDefinitions>
-   <Border Style="{StaticResource Card}">
-    <Grid><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /><RowDefinition Height="160" /></Grid.RowDefinitions>
-     <TextBlock Text="{Binding OrderCount}" Style="{StaticResource Heading}" />
-     <ListBox Grid.Row="1" ItemsSource="{Binding Orders}" SelectedItem="{Binding SelectedOrder, Mode=TwoWay}" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" AutomationProperties.Name="접수 주문 목록">
-      <ListBox.ItemTemplate><DataTemplate><Border BorderBrush="{StaticResource Edge}" BorderThickness="0,0,0,1" Padding="0,6">
-       <StackPanel><TextBlock Text="{Binding Company}" FontWeight="SemiBold" /><TextBlock Text="{Binding Id}" FontSize="11" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Id}" /><TextBlock Text="{Binding ModelName}" FontSize="13" /><TextBlock Text="{Binding State}" Style="{StaticResource MutedText}" /><TextBlock Text="{Binding ReceivedTime}" FontSize="11" /></StackPanel>
-      </Border></DataTemplate></ListBox.ItemTemplate>
-     </ListBox>
-     <StackPanel Grid.Row="2">
-      <TextBlock Text="데모 팔레트" FontSize="12" />
-      <ComboBox ItemsSource="{Binding Pallets}" DisplayMemberPath="PalletId" SelectedValuePath="PalletId" SelectedValue="{Binding DemoPalletId, Mode=TwoWay}" IsEnabled="{Binding CanConfigureEquipment}" Height="27" AutomationProperties.Name="데모 배출 팔레트" />
-      <CheckBox Content="시작 위치 확인" IsChecked="{Binding PositionReady}" IsEnabled="{Binding CanConfigureEquipment}" FontSize="12" Margin="0,5" />
-      <Button Content="선택 주문 데모 시작" Click="StartEquipment_Click" IsEnabled="{Binding CanStartEquipment}" Style="{StaticResource PrimaryButton}" FontSize="12" Padding="6,5" MinHeight="32" />
-      <Button Content="배출 확인 · 회차 완료" Click="ConfirmEquipment_Click" IsEnabled="{Binding CanConfirmEquipment}" FontSize="12" Padding="6,5" MinHeight="32" Margin="0,5,0,0" />
-     </StackPanel>
-    </Grid>
-   </Border>
-   <Border Grid.Column="2" Style="{StaticResource Card}">
-    <Grid><Grid.RowDefinitions><RowDefinition Height="44" /><RowDefinition Height="*" MinHeight="368" /><RowDefinition Height="90" /><RowDefinition Height="80" /><RowDefinition Height="58" /></Grid.RowDefinitions>
-     <StackPanel><TextBlock Text="검사 · 선택 주문" FontWeight="SemiBold" FontSize="18" /><TextBlock Text="{Binding SelectedOrderId}" Style="{StaticResource MutedText}" FontSize="12" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" /></StackPanel>
-     <Border Grid.Row="1" Background="#E7EDF3" CornerRadius="6" Margin="0,0,0,8">
-      <Grid><TextBlock Text="CAM 01 · UNO DEMO / QR 판독" Margin="12" VerticalAlignment="Top" Style="{StaticResource MutedText}" />
-       <Image Source="{Binding CameraFrame}" Stretch="Uniform" Margin="4,30,4,22" />
-       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-        <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding CameraFrame}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
-        <TextBlock Text="데모 영상 수신 대기" FontSize="20" HorizontalAlignment="Center" />
-       </StackPanel>
-       <TextBlock Text="{Binding CameraStatus}" FontSize="11" VerticalAlignment="Bottom" Margin="10,0,10,4" />
-      </Grid>
-     </Border>
-     <Grid Grid.Row="2"><Grid.RowDefinitions><RowDefinition Height="24" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions><TextBlock Text="주문 부품" Style="{StaticResource MutedText}" /><TextBlock Grid.Column="1" Text="검사 결과" Style="{StaticResource MutedText}" /></Grid>
-      <ItemsControl Grid.Row="1" ItemsSource="{Binding Parts}"><ItemsControl.ItemTemplate><DataTemplate><Grid Height="20"><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Part}" /><TextBlock Text="{Binding Expected}" Margin="10,0,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="{Binding Observed}" Foreground="{StaticResource Muted}" /></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-     </Grid>
-     <Border Grid.Row="3" BorderBrush="{StaticResource Edge}" BorderThickness="0,1,0,0" Padding="0,8,0,0">
-      <Grid><Grid.RowDefinitions><RowDefinition Height="26" /><RowDefinition Height="*" /></Grid.RowDefinitions><TextBlock Text="주문 ↔ QR 대조" FontWeight="SemiBold" /><TextBlock Text="{Binding QrMatchState}" HorizontalAlignment="Right" Foreground="#885500" />
-       <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="주문 기준" Style="{StaticResource MutedText}" /><TextBlock Text="{Binding ExpectedQr}" /></StackPanel><StackPanel Grid.Column="1"><TextBlock Text="인식 QR" Style="{StaticResource MutedText}" /><TextBlock Text="{Binding ScannedQr}" /></StackPanel></Grid>
-      </Grid>
-     </Border>
-     <Grid Grid.Row="4"><Grid.RowDefinitions><RowDefinition Height="40" /><RowDefinition /></Grid.RowDefinitions>
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-       <Button Content="DB 재시도" Click="RetryEquipment_Click" IsEnabled="{Binding CanRetryEquipment}" Margin="0,0,8,0" />
-       <Button Content="재검 요청" IsEnabled="False" />
-       <Button Content="주문 드롭" Click="DropOrder_Click" IsEnabled="{Binding CanDropOrder}" Foreground="#AB2838" Background="#FFF0F2" Margin="8,0,0,0" ToolTip="생산 대기 주문을 취소하고 목록에서 제외합니다." />
-      </StackPanel>
-      <TextBlock Grid.Row="1" Text="{Binding OrderActionStatus}" Style="{StaticResource MutedText}" FontSize="12" />
-     </Grid>
-    </Grid>
-   </Border>
-   <Grid Grid.Column="4"><Grid.RowDefinitions><RowDefinition /><RowDefinition Height="10" /><RowDefinition /></Grid.RowDefinitions>
-    <Border Style="{StaticResource Card}">
-     <StackPanel>
-      <TextBlock Text="UNO 데모 · 시간 설정" Style="{StaticResource Heading}" FontSize="16" Margin="0,0,0,6" />
-      <Grid Height="31"><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="85" /></Grid.ColumnDefinitions><TextBlock Text="IR1 감지 후 (ms)" FontSize="13" /><TextBox Grid.Column="1" Text="{Binding Ir1DelayMs, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanConfigureEquipment}" FontSize="13" Padding="4" /></Grid>
-      <Grid Height="31" Margin="0,3"><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="85" /></Grid.ColumnDefinitions><TextBlock Text="작업 가정 대기 (ms)" FontSize="13" /><TextBox Grid.Column="1" Text="{Binding RobotWaitMs, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanConfigureEquipment}" FontSize="13" Padding="4" /></Grid>
-      <Grid Height="31"><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="85" /></Grid.ColumnDefinitions><TextBlock Text="IR2 감지 후 (ms)" FontSize="13" /><TextBox Grid.Column="1" Text="{Binding Ir2DelayMs, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanConfigureEquipment}" FontSize="13" Padding="4" /></Grid>
-      <TextBlock Text="500ms 단위 · IR1/IR2 0~25000 · 대기 0~30000" FontSize="11" Margin="0,4" />
-      <Button Content="시간 적용" Click="ApplyEquipmentTimings_Click" IsEnabled="{Binding CanConfigureEquipment}" MinHeight="29" Padding="6,3" FontSize="13" />
-      <TextBlock Text="{Binding AppliedTimings}" FontSize="11" Margin="0,5" />
-      <TextBlock Text="{Binding EquipmentRunInfo}" FontSize="12" />
-     </StackPanel>
-    </Border>
-    <Border Grid.Row="2" Style="{StaticResource Card}">
-     <StackPanel>
-      <TextBlock Text="AGV 배송 · DEMO" Style="{StaticResource Heading}" FontSize="16" Margin="0,0,0,4" />
-      <TextBlock Text="{Binding AgvDetails}" FontSize="12" />
-      <TextBlock Text="{Binding AgvRoute}" FontSize="12" Margin="0,5" Foreground="{StaticResource Muted}" />
-      <ComboBox ItemsSource="{Binding AgvDestinations}" DisplayMemberPath="Name" SelectedValuePath="Point" SelectedValue="{Binding AgvDestinationPoint, Mode=TwoWay}" Height="28" AutomationProperties.Name="AGV 배송 목적지" />
-      <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-       <Button Content="선택 주문 배송 시작" Click="StartAgv_Click" IsEnabled="{Binding CanStartAgv}" FontSize="12" Padding="8,4" MinHeight="30" />
-       <Button Content="AGV 데모 정지" Click="StopAgv_Click" IsEnabled="{Binding CanStopAgv}" FontSize="12" Padding="8,4" MinHeight="30" Margin="8,0,0,0" Foreground="#AB2838" />
-      </StackPanel>
-      <TextBlock Text="시작 시 선택한 목적지를 주문 DB에 저장 · 실물 미연결" FontSize="11" Margin="0,5,0,0" />
-      <TextBlock Text="{Binding AgvAlert}" FontSize="12" Foreground="#AB2838" />
-     </StackPanel>
-    </Border>
-   </Grid>
-   <Grid Grid.Column="6"><Grid.RowDefinitions><RowDefinition Height="260" /><RowDefinition Height="10" /><RowDefinition /></Grid.RowDefinitions>
-    <Border Style="{StaticResource Card}"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
-     <TextBlock Text="선택 주문" Style="{StaticResource Heading}" />
-     <TextBlock Text="{Binding SelectedOrderId}" FontSize="12" Margin="0,0,0,6" />
-     <TextBlock Text="{Binding SelectedOrder.Company}" FontWeight="SemiBold" />
-     <TextBlock Text="{Binding SelectedOrder.Phone}" FontSize="13" />
-     <TextBlock Text="{Binding SelectedOrder.Address}" Margin="0,4" FontSize="13" />
-     <TextBlock Text="{Binding SelectedOrder.ModelName}" FontWeight="SemiBold" />
-     <TextBlock Text="{Binding SelectedOrder.Parts}" FontSize="13" Margin="0,4" />
-     <TextBlock Text="{Binding SelectedOrder.Destination}" FontSize="13" />
-     <TextBlock Text="{Binding SelectedOrder.State}" FontSize="13" />
-     <TextBlock Text="{Binding SelectedOrder.ReceivedTime}" FontSize="12" />
-    </StackPanel></ScrollViewer></Border>
-    <Border Grid.Row="2" Style="{StaticResource Card}"><Grid><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="30" /><RowDefinition Height="*" /><RowDefinition Height="30" /></Grid.RowDefinitions>
-     <TextBlock Text="{Binding PalletCount}" Style="{StaticResource Heading}" FontSize="16" />
-     <Grid Grid.Row="1" Background="#F6F8FB"><Grid.ColumnDefinitions><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="30" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="팔레트 QR" FontSize="13" /><TextBlock Grid.Column="1" Text="현재 상태" FontSize="13" /><TextBlock Grid.Column="2" Text="순환" FontSize="12" /><TextBlock Grid.Column="3" Text="갱신 시각" FontSize="13" /></Grid>
-     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="DB 팔레트 현황"><ItemsControl ItemsSource="{Binding Pallets}"><ItemsControl.ItemTemplate><DataTemplate><Grid Height="25"><Grid.ColumnDefinitions><ColumnDefinition Width="84" /><ColumnDefinition Width="84" /><ColumnDefinition Width="30" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="{Binding PalletId}" FontSize="12" /><TextBlock Grid.Column="1" Text="{Binding CurrentStatus}" FontSize="12" /><TextBlock Grid.Column="2" Text="{Binding CycleCount}" FontSize="12" /><TextBlock Grid.Column="3" Text="{Binding UpdatedTime}" ToolTip="{Binding UpdatedDateTime}" FontSize="12" /></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></ScrollViewer>
-     <TextBlock Grid.Row="3" Text="DB 상태 · 순환 횟수 · 갱신 시각 자동 조회" Style="{StaticResource MutedText}" FontSize="12" />
+  <Grid Grid.Row="2" Margin="0,0,0,10">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="10"/><ColumnDefinition Width="1.35*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="300"/></Grid.ColumnDefinitions>
+   <Border Style="{StaticResource Card}"><Grid><Grid.RowDefinitions><RowDefinition Height="34"/><RowDefinition Height="*"/><RowDefinition Height="130"/></Grid.RowDefinitions>
+    <TextBlock Text="{Binding OrderCount}" Style="{StaticResource Heading}"/>
+    <ListBox Grid.Row="1" ItemsSource="{Binding Orders}" SelectedItem="{Binding SelectedOrder,Mode=TwoWay}" HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled" BorderThickness="0">
+     <ListBox.ItemTemplate><DataTemplate><StackPanel Margin="0,5"><TextBlock Text="{Binding Company}" FontWeight="SemiBold"/><TextBlock Text="{Binding ModelName}" FontSize="12"/><TextBlock Text="{Binding OrderId}" FontSize="10" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding OrderId}"/><TextBlock Text="{Binding State}" FontSize="12"/><TextBlock Text="{Binding ReceivedTime}" FontSize="11"/></StackPanel></DataTemplate></ListBox.ItemTemplate>
+    </ListBox>
+    <StackPanel Grid.Row="2"><Button Content="선택 주문 제작 수락" Click="Accept_Click" IsEnabled="{Binding CanAccept}" FontSize="12" Margin="0,3"/>
+     <Button Content="배출 전 주문 취소" Click="Cancel_Click" IsEnabled="{Binding CanCancel}" FontSize="12" Margin="0,3"/>
+     <Button Content="주문 더 보기" Click="More_Click" IsEnabled="{Binding CanLoadMore}" FontSize="12" Margin="0,3"/>
+    </StackPanel>
+   </Grid></Border>
+   <Border Grid.Column="2" Style="{StaticResource Card}"><Grid><Grid.RowDefinitions><RowDefinition Height="52"/><RowDefinition Height="*"/><RowDefinition Height="100"/><RowDefinition Height="100"/></Grid.RowDefinitions>
+    <StackPanel><TextBlock Text="CAM 04 · 전체 공정 실시간 관제" Style="{StaticResource Heading}" FontSize="17"/><TextBlock Text="실시간 전용 · 관제 영상 저장 안 함" FontSize="11" Foreground="{StaticResource Muted}"/></StackPanel>
+    <Border Grid.Row="1" Background="#E7EDF3" CornerRadius="5" Margin="0,6"><Grid><TextBlock Text="카메라 4 연결·영상 대기" HorizontalAlignment="Center" VerticalAlignment="Center"/><Image Source="{Binding Cam4}" Stretch="Uniform"/></Grid></Border>
+    <StackPanel Grid.Row="2"><TextBlock Text="{Binding QrSummary}" FontSize="15" FontWeight="SemiBold" Margin="0,6"/><TextBlock Text="{Binding SelectedOrder.ModelName}" FontSize="15"/>
+     <StackPanel Orientation="Horizontal"><Button Content="QR 다시 읽기" Click="ReadQr_Click" IsEnabled="{Binding CanReadQr}" FontSize="12" Margin="0,6,8,0"/><Button Content="배정 저장만 재시도" Click="SaveQr_Click" IsEnabled="{Binding CanSaveQr}" FontSize="12" Margin="0,6,0,0"/></StackPanel>
+    </StackPanel>
+    <StackPanel Grid.Row="3"><StackPanel Orientation="Horizontal"><Button Content="검사 사진 보기" Click="Image_Click" IsEnabled="{Binding CanViewImage}" FontSize="11" MinHeight="26" Padding="6,2"/><Button Content="사진 삭제 · 최상위" Click="DeleteImage_Click" IsEnabled="{Binding CanDeleteImage}" FontSize="11" MinHeight="26" Padding="6,2" Margin="6,0"/></StackPanel><TextBlock Text="{Binding InspectionSummary}" FontSize="14" FontWeight="SemiBold"/><TextBlock Text="{Binding ActionStatus}" FontSize="12" Margin="0,6" Foreground="{StaticResource Muted}"/></StackPanel>
+   </Grid></Border>
+   <TabControl Grid.Column="4">
+    <TabItem Header="카메라"><Grid><Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+     <Border Style="{StaticResource Card}" Margin="0,0,0,5"><Grid><Grid.RowDefinitions><RowDefinition Height="26"/><RowDefinition/></Grid.RowDefinitions><TextBlock Text="CAM 01 · 투입 QR" FontWeight="SemiBold" FontSize="14"/><Border Grid.Row="1" Background="#E7EDF3"><Image Source="{Binding Cam1}" Stretch="Uniform"/></Border></Grid></Border>
+     <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,5"><Grid><Grid.RowDefinitions><RowDefinition Height="26"/><RowDefinition/></Grid.RowDefinitions><TextBlock Text="CAM 02 · 조립 위치 보정" FontWeight="SemiBold" FontSize="14"/><Border Grid.Row="1" Background="#E7EDF3"><Image Source="{Binding Cam2}" Stretch="Uniform"/></Border></Grid></Border>
+     <Border Grid.Row="2" Style="{StaticResource Card}"><Grid><Grid.RowDefinitions><RowDefinition Height="26"/><RowDefinition/></Grid.RowDefinitions><TextBlock Text="CAM 03 · 동일 프레임 QR·부품 검사" FontWeight="SemiBold" FontSize="14"/><Border Grid.Row="1" Background="#E7EDF3"><Image Source="{Binding Cam3}" Stretch="Uniform"/></Border></Grid></Border>
+    </Grid></TabItem>
+    <TabItem Header="재고"><StackPanel Margin="12"><TextBlock Text="좌우 공용 부품 재고" Style="{StaticResource Heading}"/>
+     <ItemsControl ItemsSource="{Binding Stock}"><ItemsControl.ItemTemplate><DataTemplate><Grid Height="38"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><TextBlock Text="{Binding StockKey}"/><TextBlock Grid.Column="1" Text="{Binding AvailableUnits}"/></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+     <TextBlock Text="입고 부품" Margin="0,12,0,4"/><ComboBox ItemsSource="{Binding Stock}" DisplayMemberPath="StockKey" SelectedValuePath="StockKey" SelectedValue="{Binding StockKey,Mode=TwoWay}" IsEnabled="{Binding CanAdminister}"/>
+     <TextBlock Text="입고 수량" Margin="0,12,0,4"/><TextBox Text="{Binding AddedUnits,UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanAdminister}"/>
+     <Button Content="재입고 등록 · 최상위 관리자" Click="Restock_Click" IsEnabled="{Binding CanAdminister}" Margin="0,12"/>
+     <TextBlock Text="같은 종류의 팔을 양쪽에 선택하면 공용 재고 2개를 차감합니다." FontSize="12"/>
+    </StackPanel></TabItem>
+    <TabItem Header="계정"><StackPanel Margin="12"><TextBlock Text="관리자 계정 · 최상위 전용" Style="{StaticResource Heading}"/>
+     <TextBlock Text="아이디"/><TextBox Text="{Binding NewLoginId,UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanAdminister}"/>
+     <TextBlock Text="표시 이름" Margin="0,8,0,0"/><TextBox Text="{Binding NewDisplayName,UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanAdminister}"/>
+     <TextBlock Text="초기 비밀번호" Margin="0,8,0,0"/><PasswordBox x:Name="NewPassword" IsEnabled="{Binding CanAdminister}"/>
+     <ComboBox ItemsSource="{Binding Roles}" SelectedItem="{Binding NewRole}" IsEnabled="{Binding CanAdminister}" Margin="0,8"/>
+     <Button Content="계정 생성" Click="CreateAccount_Click" IsEnabled="{Binding CanAdminister}"/>
+     <ListBox ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount}" DisplayMemberPath="DisplayName" Height="170" Margin="0,12" IsEnabled="{Binding CanAdminister}"/>
+     <ComboBox ItemsSource="{Binding Roles}" SelectedItem="{Binding RoleToSet}" IsEnabled="{Binding CanAdminister}"/>
+     <Button Content="선택 계정 권한 변경 · 세션 철회" Click="ChangeRole_Click" IsEnabled="{Binding CanAdminister}" Margin="0,8"/>
+     <TextBlock Text="결산·설비 설정은 팀 승인 프로필 확정 후 활성화합니다." FontSize="12"/>
+    </StackPanel></TabItem>
+    <TabItem Header="현장 확인"><StackPanel Margin="12"><TextBlock Text="결과 미확인 명령 대조" Style="{StaticResource Heading}"/><TextBlock Text="이력의 명령 ID와 실물·장비 결과를 대조해 기록합니다. 확인만으로 동작을 완료 처리하지 않습니다." FontSize="12" Margin="0,8"/>
+     <TextBlock Text="명령 UUID"/><TextBox Text="{Binding ReconcileCommandId,UpdateSourceTrigger=PropertyChanged}" FontSize="12"/>
+     <TextBlock Text="관측 결과" Margin="0,12,0,3"/><ComboBox ItemsSource="{Binding Observations}" SelectedItem="{Binding ReconcileObservation}"/>
+     <TextBlock Text="확인 근거·사유" Margin="0,12,0,3"/><TextBox Text="{Binding ReconcileReason,UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" AcceptsReturn="True" Height="100"/>
+     <Button Content="현장 확인 기록" Click="Reconcile_Click" IsEnabled="{Binding CanReconcile}" Margin="0,12"/>
+     <TextBlock Text="세 장비 상태·명령 완료 증거가 맞아야 정상 정지 확인 후 재개할 수 있습니다. 수동 조작은 승인된 절차 프로필 준비 전까지 차단합니다." FontSize="12"/>
+    </StackPanel></TabItem>
+   </TabControl>
+   <Grid Grid.Column="6"><Grid.RowDefinitions><RowDefinition Height="280"/><RowDefinition Height="10"/><RowDefinition/></Grid.RowDefinitions>
+    <Border Style="{StaticResource Card}"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel><TextBlock Text="선택 주문" Style="{StaticResource Heading}"/><TextBlock Text="{Binding SelectedOrder.Company}" FontWeight="SemiBold"/><TextBlock Text="{Binding SelectedOrder.Phone}" FontSize="13"/><TextBlock Text="{Binding SelectedOrder.Address}" FontSize="13" Margin="0,5"/><TextBlock Text="{Binding SelectedOrder.ModelName}"/><TextBlock Text="{Binding SelectedOrder.Destination}" FontSize="13"/><TextBlock Text="{Binding SelectedOrder.State}" FontSize="13" Margin="0,5"/><TextBlock Text="{Binding SelectedOrder.OrderId}" FontSize="10"/><TextBlock Text="{Binding SelectedOrder.ReceivedTime}" FontSize="12"/></StackPanel></ScrollViewer></Border>
+    <Border Grid.Row="2" Style="{StaticResource Card}"><Grid><Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="*"/><RowDefinition Height="38"/></Grid.RowDefinitions><TextBlock Text="{Binding PalletCount}" Style="{StaticResource Heading}"/>
+     <ListBox Grid.Row="1" ItemsSource="{Binding Pallets}" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListBox.ItemTemplate><DataTemplate><StackPanel Margin="0,3"><TextBlock Text="{Binding PalletId}" FontSize="13" FontWeight="SemiBold"/><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Stage}" FontSize="11"/><TextBlock Text="{Binding UpdatedTime}" FontSize="11" Margin="8,0,0,0"/></StackPanel></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+     <TextBlock Grid.Row="2" Text="하역 후 팔레트는 작업자 수동 회수·재적재 확인이 필요합니다." FontSize="11"/>
     </Grid></Border>
    </Grid>
   </Grid>
-  <Grid Grid.Row="4" Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="430" /><ColumnDefinition Width="10" /><ColumnDefinition /></Grid.ColumnDefinitions>
-   <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="확인 필요" Style="{StaticResource Heading}" /><TextBlock Text="{Binding EquipmentAlert}" Foreground="#AB2838" /><TextBlock Text="{Binding EquipmentNotice}" Style="{StaticResource MutedText}" Margin="0,6,0,0" /></StackPanel></Border>
-   <Border Grid.Column="2" Style="{StaticResource Card}"><StackPanel><TextBlock Text="최근 장비 이벤트" Style="{StaticResource Heading}" FontSize="16" Margin="0,0,0,4" /><ItemsControl ItemsSource="{Binding Events}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal" Height="20"><TextBlock Text="{Binding Time}" Width="100" Style="{StaticResource MutedText}" /><TextBlock Text="{Binding Message}" FontSize="14" /></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></Border>
+  <Grid Grid.Row="3" Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="440"/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions>
+   <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="확인 필요" Style="{StaticResource Heading}"/><TextBlock Text="{Binding Alert}" Foreground="#AB2838" FontSize="13"/><TextBlock Text="{Binding EnvironmentLabel}" FontSize="11" Margin="0,6"/></StackPanel></Border>
+   <Border Grid.Column="2" Style="{StaticResource Card}"><Grid><Grid.RowDefinitions><RowDefinition Height="26"/><RowDefinition/></Grid.RowDefinitions><TextBlock Text="선택 주문 · QR·검사·하역 이력" Style="{StaticResource Heading}" FontSize="15"/>
+    <ListBox Grid.Row="1" ItemsSource="{Binding History}" SelectedItem="{Binding SelectedHistory,Mode=TwoWay}" BorderThickness="0"><ListBox.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal"><TextBlock Text="{Binding Time}" FontSize="12" Width="75"/><TextBlock Text="{Binding Kind}" FontSize="12" Width="230"/><TextBlock Text="{Binding Message}" FontSize="12"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+   </Grid></Border>
   </Grid>
-  <TextBlock Grid.Row="5" Text="선택 주문 · QR 배정 · UNO DEMO 연결 · AGV DEMO · 실제 장비 미연결" Style="{StaticResource MutedText}" />
+  <TextBlock Grid.Row="4" Text="규약 0.1.0 · 수락 순번 · QR·DB 저장 후 벨트 출발 · 조립 대기 자세 · 암실 검사 · 2번·85° 최종 복귀" FontSize="11" Foreground="{StaticResource Muted}"/>
  </Grid>
 </UserControl>

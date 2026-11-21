@@ -41,7 +41,7 @@ public sealed partial class DashboardViewModel
     public bool CanConfirmEquipment => equipmentConnected && !equipmentBusy && Equipment.CanConfirm;
     public bool CanRetryEquipment => equipmentConnected && !equipmentBusy && Equipment.CanRetry;
     public string EquipmentSummary => equipmentConnected
-        ? $"UNO DEMO · {StateLabel(Equipment.State)} · {Equipment.Run?.JobId ?? "주문 선택 대기"}"
+        ? $"{EquipmentLabel} · {StateLabel(Equipment.State)} · {Equipment.Run?.JobId ?? "주문 선택 대기"}"
         : "UNO DEMO 연결 대기";
     public string EquipmentSensorStatus => equipmentConnected
         ? $"IR1 {(Equipment.IrClear ? "비어 있음" : "감지")} · IR2 {(Equipment.Ir2Clear ? "비어 있음" : "감지")}" : "IR 센서 상태 수신 대기";
@@ -51,7 +51,8 @@ public sealed partial class DashboardViewModel
     public string EquipmentAlert => !string.IsNullOrEmpty(equipmentError) ? equipmentError :
         !string.IsNullOrEmpty(Equipment.Error) ? Equipment.Error :
         !string.IsNullOrEmpty(Equipment.Run?.DatabaseError) ? Equipment.Run.DatabaseError : "현재 장비 알림 없음";
-    public string EquipmentNotice => "DEMO · 실제 USB·카메라·모터 미연결";
+    public string EquipmentLabel => Equipment.Mode == "REMOTE" ? $"원격 UNO · {Equipment.HardwareMode}" : "UNO DEMO";
+    public string EquipmentNotice => Equipment.Mode == "REMOTE" ? $"라즈베리파이 원격 연결 · {Equipment.HardwareMode}" : "DEMO · 실제 USB·카메라·모터 미연결";
     public string AppliedTimings => Equipment.Timings.Values.Count == 0 ? "시간 설정 조회 대기" :
         $"UNO 적용 {Equipment.Timings.Values.GetValueOrDefault("ir1_delay_ms")} / {Equipment.Timings.Values.GetValueOrDefault("robot_wait_ms")} / {Equipment.Timings.Values.GetValueOrDefault("ir2_delay_ms")} ms · {Equipment.Timings.Status}";
 
@@ -75,7 +76,10 @@ public sealed partial class DashboardViewModel
         try
         {
             if (Equipment.IsOwner && Equipment.Run is { FinishedAt: null })
-                await equipmentApi.HeartbeatAsync(connectedServer, connectedToken, cancellation);
+            {
+                try { await equipmentApi.HeartbeatAsync(connectedServer, connectedToken, cancellation); }
+                catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Conflict) { }
+            }
             var state = await equipmentApi.GetStateAsync(connectedServer, connectedToken, cancellation);
             cancellation.ThrowIfCancellationRequested();
             ApplyEquipment(state);
@@ -109,7 +113,7 @@ public sealed partial class DashboardViewModel
             image.EndInit();
             image.Freeze();
             CameraFrame = image;
-            CameraStatus = "UNO DEMO · 합성 영상 / 실제 QR 이미지 판독";
+            CameraStatus = Equipment.Mode == "REMOTE" ? $"라즈베리파이 영상 · {Equipment.HardwareMode}" : "UNO DEMO · 합성 영상 / 실제 QR 이미지 판독";
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { return; }
         catch (Exception error) when (error is HttpRequestException or IOException or JsonException or OperationCanceledException or NotSupportedException or FormatException)
@@ -146,6 +150,7 @@ public sealed partial class DashboardViewModel
             nameof(EquipmentRunInfo), nameof(EquipmentAlert), nameof(AppliedTimings), nameof(CanConfigureEquipment),
             nameof(CanStartEquipment), nameof(CanStopEquipment), nameof(CanConfirmEquipment), nameof(CanRetryEquipment),
             nameof(ExpectedQr), nameof(ScannedQr), nameof(QrMatchState), nameof(Connections), nameof(CanDropOrder) }) Notify(name);
+        Notify(nameof(EquipmentLabel)); Notify(nameof(EquipmentNotice));
     }
 
     private async Task EquipmentActionAsync(string action, object payload, string message)
@@ -187,7 +192,7 @@ public sealed partial class DashboardViewModel
     }
 
     public Task StopEquipmentAsync() => EquipmentActionAsync("stop", new { }, "데모를 정지했습니다.");
-    public Task ConfirmEquipmentAsync() => EquipmentActionAsync("confirm-ejection", new { }, "배출 확인 · 장비 회차 성공을 기록했습니다.");
+    public Task ConfirmEquipmentAsync() => EquipmentActionAsync("confirm-ejection", new { }, Equipment.Mode == "REMOTE" ? "배출 확인 요청 · 라즈베리파이 응답을 기다립니다." : "배출 확인 · 장비 회차 성공을 기록했습니다.");
     public Task RetryEquipmentDatabaseAsync() => EquipmentActionAsync("database-retry", new { }, "장비 재운전 없이 DB 작업을 재시도했습니다.");
 
     public Task ApplyEquipmentTimingsAsync()

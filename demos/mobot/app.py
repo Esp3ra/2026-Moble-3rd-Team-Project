@@ -6,10 +6,12 @@ from string import Template
 from flask import Flask, abort, redirect, request
 from waitress import serve
 
-from orders import BANKS, CARD_ISSUERS, connect, create_order_api, initialize_orders
+from orders import BANKS, CARD_ISSUERS, HEAD_CODES, LEFT_CODES, RIGHT_CODES, connect, create_order_api, initialize_orders
 from auth import create_auth_api
 from equipment import create_equipment_api
 from agv import create_agv_api
+from remote_equipment import create_device_api
+import json
 
 
 ROOT = Path(__file__).resolve().parent
@@ -34,9 +36,9 @@ HEADS = (
     ("mono", "모노아이 적외선 설비점검용 헤드", "적외선 렌즈 한 개를 배치한 설비 점검용 헤드"),
 )
 ARMS = (
-    ("grip", "이송용 암", "부품을 잡는 U자 집게"),
-    ("weld", "용접용 암", "용접 위치에 접근하는 짧은 원뿔형 팁"),
-    ("fasten", "체결용 암", "체결 작업에 사용하는 육각기둥형 팁"),
+    ("grip", "집기팔", "부품을 잡는 U자 집게"),
+    ("weld", "용접팔", "용접 위치에 접근하는 짧은 원뿔형 팁"),
+    ("fasten", "나사팔", "결속 작업에 사용하는 육각기둥형 팁"),
 )
 APPLICATIONS = (
     ("transfer", "부품 이송", "U자 집게로 부품을 잡고 다음 공정의 작업 위치로 옮기는 구성입니다.", "U자 집게로 금속 부품을 옮기는 모봇"),
@@ -82,7 +84,8 @@ def slot_options(slot, label, modules):
     options = []
     for module_id, name, _ in modules:
         icon = module_icon(module_id, slot == "head")
-        options.append(template("order-option", slot=slot, value=module_id, name=name, icon=icon))
+        code={"head":HEAD_CODES,"left":LEFT_CODES,"right":RIGHT_CODES}[slot][module_id]
+        options.append(template("order-option", slot=slot, value=code, symbol=module_id, name=f"{name} ({code})", icon=icon))
     return template("order-slot", slot=slot, label=label, options="".join(options))
 
 
@@ -151,12 +154,28 @@ def create_app():
         MAX_CONTENT_LENGTH=8192,
         UNO_DEMO_ROOT=ROOT / 'instance' / 'uno-demo',
         UNO_DEMO_QRS=ROOT / 'pallet_qrs',
+        EQUIPMENT_MODE='DEMO',
+        REMOTE_DEVICE_ID='uno-pi',
     )
+    settings=app.config['ORDER_DB'].parent/'remote-equipment.json'
+    if settings.exists():
+        config=json.loads(settings.read_text(encoding='utf-8'))
+        app.config.update(EQUIPMENT_MODE=config.get('mode','DEMO'),REMOTE_DEVICE_ID=config.get('device_id','uno-pi'))
+    app.config['EQUIPMENT_MODE']=os.environ.get('MOBOT_EQUIPMENT_MODE',app.config['EQUIPMENT_MODE'])
+    if app.config['EQUIPMENT_MODE'] not in {'DEMO','REMOTE'}:raise ValueError('MOBOT_EQUIPMENT_MODE는 DEMO 또는 REMOTE여야 합니다.')
     initialize_orders(app.config["ORDER_DB"])
     app.register_blueprint(create_order_api(HEADS, ARMS))
     app.register_blueprint(create_auth_api(connect))
     app.register_blueprint(create_equipment_api())
     app.register_blueprint(create_agv_api())
+    app.register_blueprint(create_device_api())
+    from factory_v1.runtime import install
+    app.config['LEGACY_API_ENABLED']=os.environ.get('MOBOT_LEGACY_API_ENABLED','0')=='1'
+    install(app)
+
+    @app.before_request
+    def limits():
+        request.max_content_length = 512000 if request.endpoint=='devices.frame' else (65536 if request.endpoint=='devices.poll' else 8192)
 
     @app.route("/")
     @app.route("/order")
@@ -178,4 +197,6 @@ if __name__ == "__main__":
     host = os.environ.get("MOBOT_HOST", "127.0.0.1")
     port = int(os.environ.get("MOBOT_PORT", "8000"))
     print(f"MOBOT  http://{host}:{port}", flush=True)
-    serve(app, host=host, port=port, max_request_body_size=8192)
+    serve(app, host=host, port=port, max_request_body_size=512000,
+          trusted_proxy="127.0.0.1", trusted_proxy_count=1,
+          trusted_proxy_headers={"x-forwarded-for"})

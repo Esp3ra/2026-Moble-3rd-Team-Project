@@ -3,14 +3,15 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:vm="clr-namespace:RobotFactory.Admin.ViewModels"
  xmlns:views="clr-namespace:RobotFactory.Admin.Views"
- Title="ROBOT FACTORY · 주문 관제" Width="1920" Height="1080" WindowState="Maximized" MinWidth="1000" MinHeight="640"
+ Title="ROBOT FACTORY · 주문 관제" Width="1920" Height="1080" WindowState="Maximized"
+ ResizeMode="CanResize"
  WindowStartupLocation="CenterScreen" Style="{StaticResource {x:Type Window}}">
  <Window.Resources>
   <DataTemplate DataType="{x:Type vm:DashboardViewModel}"><views:DashboardView /></DataTemplate>
   <DataTemplate DataType="{x:Type vm:LoginViewModel}"><views:LoginView /></DataTemplate>
  </Window.Resources>
  <Grid Margin="12">
- <Viewbox Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
+ <Viewbox x:Name="LayoutViewport" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
   <Grid Width="2000" Height="1056">
    <Grid.RowDefinitions><RowDefinition Height="Auto" MinHeight="64" /><RowDefinition Height="*" /></Grid.RowDefinitions>
    <Border Style="{StaticResource Card}" Margin="0,0,0,10" Padding="12,6">
@@ -18,7 +19,7 @@
      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="370" /></Grid.ColumnDefinitions>
      <StackPanel VerticalAlignment="Center">
       <TextBlock Text="ROBOT FACTORY" FontSize="20" FontWeight="Bold" TextWrapping="NoWrap" />
-      <TextBlock Text="{Binding SessionDisplay}" Style="{StaticResource MutedText}" FontSize="12" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+      <TextBlock Text="{Binding SessionDisplay}" Style="{StaticResource MutedText}" FontSize="12" TextWrapping="NoWrap" Margin="0,2,0,0" />
      </StackPanel>
      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
       <Button Content="관제 화면" Command="{Binding ShowDashboardCommand}" IsEnabled="{Binding IsLoggedIn}" Margin="0,0,8,0" />
@@ -26,9 +27,9 @@
       <Button Content="로그아웃" IsEnabled="{Binding IsLoggedIn}" Click="Logout_Click" />
      </StackPanel>
      <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="20,0,0,0" VerticalAlignment="Center">
-      <Button Content="■ 컨베이어 비상정지" IsEnabled="False" Background="#FFF0F2" Foreground="#AB2838"
-        ToolTip="화면 자리만 구성됨. 실제 정지 명령을 전송하지 않음." />
-      <TextBlock Text="제어 미연결&#10;정지 확인 없음" Margin="12,0,0,0" Style="{StaticResource MutedText}" />
+      <Button Content="■ 전체 공정 정지" IsEnabled="{Binding CurrentView.CanPause}" Click="Pause_Click" Background="#FFF0F2" Foreground="#AB2838"
+        ToolTip="LINE·ARM·AGV 전체 정상 정지 요청. 완료는 각 장비 회신으로 확인합니다." />
+      <TextBlock Text="{Binding CurrentView.Summary}" Margin="12,0,0,0" Style="{StaticResource MutedText}" />
      </StackPanel>
     </Grid>
    </Border>

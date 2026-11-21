@@ -42,7 +42,10 @@ public sealed partial class DashboardViewModel
         try
         {
             if (Agv.IsOwner && Agv.Task is { FinishedAt: null })
-                await agvApi.RequestAsync(connectedServer, connectedToken, "heartbeat", new { }, cancellation);
+            {
+                try { await agvApi.RequestAsync(connectedServer, connectedToken, "heartbeat", new { }, cancellation); }
+                catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Conflict) { }
+            }
             var state = await agvApi.RequestAsync(connectedServer, connectedToken, "state", null, cancellation);
             cancellation.ThrowIfCancellationRequested();
             Agv = state;

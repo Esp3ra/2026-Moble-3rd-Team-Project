@@ -8,7 +8,7 @@
 --   5. [222번] SORTING_RESULTS: pallet_returned 삭제 (허브 하차 시 종료)
 --   6. [176번] AGV_TRANSPORT_LOGS 테이블 전체 제거
 --   7. [70번] ORDERS: address 앞자리 파싱 기반 3대 허브 배송 목적지 매핑
---   8. [71번] ORDERS: model_name 모듈 조합형 코드 반영 (예: A1a)
+--   8. [71번] ORDERS: model_name 모듈 조합형 코드 반영 (예: H1-L1-R1)
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
@@ -60,10 +60,10 @@ CREATE TABLE IF NOT EXISTS ORDERS (
     card_issuer TEXT,                            -- 신용카드 발급사 코드
     installment_months INTEGER,                  -- 카드 결제 개월 수 (1: 일시불)
     address TEXT,                                -- 배송 주소 (앞자리 인식 -> 3개 허브로 배송)
-    model_name TEXT NOT NULL,                    -- 모듈 조합형 모델명 (예: A1a = 머리1/오른손1/왼손1)
-    target_head_id TEXT NOT NULL,                -- 머리 부품 (head-A, head-B)
-    target_arm_l_id TEXT NOT NULL,               -- 왼팔 부품 (arm-a, arm-b, arm-c)
-    target_arm_r_id TEXT NOT NULL,               -- 오른팔 부품 (arm-1, arm-2, arm-3)
+    model_name TEXT NOT NULL,                    -- 머리-왼팔-오른팔 조합형 모델명 (예: H1-L1-R1)
+    target_head_id TEXT NOT NULL,                -- 머리 부품 (H1, H2)
+    target_arm_l_id TEXT NOT NULL,               -- 왼팔 부품 (L1, L2, L3)
+    target_arm_r_id TEXT NOT NULL,               -- 오른팔 부품 (R1, R2, R3)
     target_station INTEGER CHECK (target_station IN (3, 4, 5, 6, 7)), -- 3 서울, 4 평택, 5 수원, 6 오류1, 7 오류2, NULL 미배정
     status TEXT NOT NULL DEFAULT 'PENDING',      -- PENDING, IN_PROGRESS, COMPLETED, CANCELED
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS EQUIPMENT_RUNS (
     run_id TEXT PRIMARY KEY,
     request_id TEXT NOT NULL UNIQUE,
     device_id TEXT NOT NULL DEFAULT 'UNO-DEMO',
-    mode TEXT NOT NULL DEFAULT 'DEMO' CHECK (mode = 'DEMO'),
+    mode TEXT NOT NULL DEFAULT 'DEMO' CHECK (mode IN ('DEMO', 'REMOTE')),
     job_id TEXT NOT NULL REFERENCES ORDERS(job_id) ON UPDATE CASCADE,
     expected_pallet_id TEXT NOT NULL REFERENCES PALLETS(pallet_id),
     pallet_id TEXT REFERENCES PALLETS(pallet_id),
@@ -135,6 +135,36 @@ CREATE TABLE IF NOT EXISTS EQUIPMENT_DEVICE_LEASES (
     device_id TEXT PRIMARY KEY,
     instance_id TEXT NOT NULL,
     heartbeat_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS REMOTE_DEVICES (
+    device_id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL,
+    hardware_mode TEXT NOT NULL CHECK(hardware_mode IN ('DEMO','LIVE')),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    boot_id TEXT,
+    sequence INTEGER NOT NULL DEFAULT -1,
+    last_seen REAL NOT NULL DEFAULT 0,
+    status_json TEXT NOT NULL DEFAULT '{}',
+    frame_jpeg BLOB,
+    frame_at REAL NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS REMOTE_COMMANDS (
+    command_id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL REFERENCES REMOTE_DEVICES(device_id),
+    run_id TEXT REFERENCES EQUIPMENT_RUNS(run_id),
+    action TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'PENDING',
+    expires_at REAL NOT NULL,
+    result TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_remote_commands_device ON REMOTE_COMMANDS(device_id,state);
+CREATE TABLE IF NOT EXISTS REMOTE_RUN_CONTROL (
+    run_id TEXT PRIMARY KEY REFERENCES EQUIPMENT_RUNS(run_id),
+    owner_heartbeat REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS AGV_TASKS (
@@ -173,9 +203,9 @@ CREATE TABLE IF NOT EXISTS ASSEMBLY_LOGS (
     arm_l_assembled INTEGER NOT NULL DEFAULT 0,  -- 왼팔 조립 완료 여부
     arm_r_assembled INTEGER NOT NULL DEFAULT 0,  -- 오른팔 조립 완료 여부
     head_assembled INTEGER NOT NULL DEFAULT 0,   -- 머리 조립 완료 여부
-    assembled_head_id TEXT DEFAULT NULL,         -- 실제 장착된 머리 부품 ID (head-A, head-B)
-    assembled_arm_l_id TEXT DEFAULT NULL,        -- 실제 장착된 왼팔 부품 ID (arm-a, arm-b, arm-c)
-    assembled_arm_r_id TEXT DEFAULT NULL,        -- 실제 장착된 오른팔 부품 ID (arm-1, arm-2, arm-3)
+    assembled_head_id TEXT DEFAULT NULL,         -- 실제 장착된 머리 부품 ID (H1, H2)
+    assembled_arm_l_id TEXT DEFAULT NULL,        -- 실제 장착된 왼팔 부품 ID (L1, L2, L3)
+    assembled_arm_r_id TEXT DEFAULT NULL,        -- 실제 장착된 오른팔 부품 ID (R1, R2, R3)
     assembled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (mapping_id) REFERENCES JOB_PALLET_MAPPINGS(mapping_id) ON UPDATE CASCADE
 );
@@ -204,7 +234,7 @@ CREATE TABLE IF NOT EXISTS INSPECTION_2ND_LOGS (
     top_qr_verified INTEGER NOT NULL DEFAULT 1,  -- QR 재촬영 및 JOB ID 일치 검증
     head_model_match INTEGER NOT NULL,           -- 머리 모델 일치 여부 (오부착 판정)
     arm_model_match INTEGER NOT NULL DEFAULT 1,  -- 양팔 모델 규격 일치 여부
-    actual_head_id TEXT DEFAULT NULL,            -- 실제 판독된 머리 부품 ID (head-A, head-B)
+    actual_head_id TEXT DEFAULT NULL,            -- 실제 판독된 머리 부품 ID (H1, H2)
     is_missing_part INTEGER NOT NULL DEFAULT 0,  -- 부품 누락(탈락) 여부
     confidence_score REAL NOT NULL DEFAULT 1.0,  -- YOLO AI 신뢰도 점수 (0.0~1.0)
     overall_result TEXT NOT NULL,                -- PASS, ERR_MISMATCH(오부착), ERR_DEFECT(누락), ERR_HOLD
