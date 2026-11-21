@@ -1,0 +1,33 @@
+name: AGV firmware build
+
+on:
+  pull_request:
+    branches: [Alpha]
+    paths:
+      - 'AGV/**'
+      - '.github/workflows/agv-firmware-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  esp32:
+    name: ESP32 Dev Module
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test firmware control and routes with fake hardware
+        run: python3 AGV/tests/run_firmware_tests.py
+      - name: Test central server client
+        run: python3 -m unittest discover -s AGV/tests -p 'test_*.py'
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: '1.6.0'
+      - name: Install ESP32 board support
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+      - name: Compile AGV firmware
+        run: arduino-cli compile --fqbn esp32:esp32:esp32 AGV/AgvRouteTest
