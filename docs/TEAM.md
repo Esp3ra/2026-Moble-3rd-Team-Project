@@ -5,8 +5,9 @@
 | 항목 | 상태 |
 | --- | --- |
 | GitHub 관리자 | Esp3ra |
-| 팀원 계정·담당 기능·수정 경로 | 미정 |
-| 프로젝트 주제·기술 스택·DB | 미정 |
+| 팀 내 담당 | [팀 규약 공유본 23번](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/blob/main/docs/프로젝트_전체규약_팀답변_공유본.md) 참조. GitHub 계정별 수정 경로는 별도 관리 |
+| 프로젝트·통합 DB | 주문형 로봇 조립·검사·이송 / 메인 PC 업무 서버의 SQLite |
+| 파트 간 통신 규약 | [현재 공정·통신·DTO 기준](HARDWARE_WORKFLOW.md) |
 | 협업 방식 | 포크 없이 같은 저장소의 작업 브랜치에서 PR 제출 |
 | 일반 개발 통합 기준 | Alpha |
 
