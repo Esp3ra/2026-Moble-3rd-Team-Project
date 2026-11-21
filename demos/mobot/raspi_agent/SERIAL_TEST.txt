@@ -1,0 +1,38 @@
+USB 시리얼 -> Pi -> ngrok -> Flask -> WPF 진단
+
+1. 기존 raspi_agent.agent와 Arduino 시리얼 모니터를 종료합니다.
+   systemd 서비스를 설치했다면 sudo systemctl stop mobot-agent 도 실행합니다.
+   같은 USB 포트는 한 프로그램만 사용해야 합니다.
+
+2. serial_probe.py를 기존 raspi_agent 폴더에 복사합니다.
+   기존 config.json은 그대로 사용합니다. 토큰 재발급은 필요하지 않습니다.
+   이 프로그램은 현재 LIVE 등록 장비용입니다.
+
+3. 두 패키지 폴더가 있는 위치에서 USB 포트를 확인합니다.
+   cd /home/pi/mobot-device/mobot-raspi-uno
+   .venv/bin/python -m serial.tools.list_ports
+
+4. 예를 들어 UNO가 /dev/ttyACM0이고 아두이노의 Serial.begin이 115200이면:
+   .venv/bin/python -m raspi_agent.serial_probe --config raspi_agent/config.json --port /dev/ttyACM0 --baud 115200
+
+5. Pi 터미널 확인:
+   [USB] PI_TEST:001
+   [SERVER OK] PI_TEST:001
+   첫 줄은 USB 수신 성공, 둘째 줄은 인증된 Flask 보고 성공입니다.
+   기존 펌웨어가 보내는 READY UNO_SIM_V1, IR:CLEAR 등의 메시지도 표시합니다.
+   USB 메시지가 없으면 서버 접속 성공과 별개로 '아직 USB 메시지 없음'으로 표시합니다.
+
+6. PC의 WPF 관리자페이지에 로그인해서 하단 '최근 장비 이벤트'를 확인합니다.
+   UNO · PI_TEST:001 이 보이면 중앙 서버에서 WPF까지 표시된 것입니다.
+
+주의할 동작:
+ - 카메라를 열지 않습니다. QR 인식, DB 주문 배정, 모터 운전은 하지 않습니다.
+ - 운전 준비 플래그를 false로 보내므로 진단 중 운전 시작은 불가능합니다.
+ - 수신 전용이며 serial.write는 호출하지 않습니다. 도착한 제어 명령도 거절합니다.
+ - UNO USB 포트를 여는 것만으로 보드가 리셋될 수 있습니다.
+ - 최근 메시지 5개만 보고하고 WPF는 최근 3개를 표시합니다.
+   고속 통신의 모든 메시지를 영구 저장하는 수집 도구는 아닙니다.
+ - 종료는 Ctrl+C입니다. 원래 운전 에이전트로 돌아가려면 종료 후
+   .venv/bin/python -m raspi_agent.agent --config raspi_agent/config.json
+   을 실행합니다. 진단/운전 프로그램 교체 직후 서버가 중복 접속으로 거절하면
+   기존 프로그램이 종료됐는지 확인하고 6초 이상 기다렸다 다시 실행합니다.

@@ -1,0 +1,14 @@
+{
+  "mode": "HARDWARE",
+  "devices": {
+    "LINE": {"base_url": "https://line-adapter.internal:8443", "controller_token": "REPLACE_LINE_CONTROLLER_KEY"},
+    "ARM": {"base_url": "https://arm-adapter.internal:8443", "controller_token": "REPLACE_ARM_CONTROLLER_KEY"},
+    "AGV": {"base_url": "https://agv-adapter.internal:8443", "controller_token": "REPLACE_AGV_CONTROLLER_KEY"}
+  },
+  "device_tokens": {"LINE": "REPLACE_LINE_EVENT_KEY", "ARM": "REPLACE_ARM_EVENT_KEY", "AGV": "REPLACE_AGV_EVENT_KEY", "VISION": "REPLACE_VISION_EVENT_KEY"},
+  "controller_token": "REPLACE_LOCAL_ADAPTER_KEY",
+  "camera_indices": {"cam1": null, "cam2": null, "cam3": null, "cam4": null},
+  "vision_module": null,
+  "vision_profile_approved": false,
+  "calibration_profile": {"approved": false}
+}

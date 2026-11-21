@@ -1,0 +1,33 @@
+name: MOBOT v1 and demo tests
+
+on:
+  push:
+    paths: ['demos/mobot/**', '.github/workflows/mobot-demo-tests.yml']
+  pull_request:
+    paths: ['demos/mobot/**', '.github/workflows/mobot-demo-tests.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  demo-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install demo dependencies
+        run: python -m pip install -r demos/mobot/requirements-dev.txt -r demos/mobot/pallet_system_uno_sim/requirements.txt
+      - name: Test central server and SQLite demos
+        working-directory: demos/mobot
+        run: python -B -m unittest discover -s tests -v
+      - name: Test UNO module simulation
+        working-directory: demos/mobot/pallet_system_uno_sim
+        run: python -B -m unittest discover -s tests -v
+      - name: Validate v1 responses against the published OpenAPI
+        working-directory: demos/mobot
+        run: python -B scripts/check_openapi.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
