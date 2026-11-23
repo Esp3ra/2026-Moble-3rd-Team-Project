@@ -35,3 +35,6 @@ coverage/
 TestResults/
 .DS_Store
 Thumbs.db
+
+# Retired local robot-arm experiments. Product modules live in devices/mycobot_pi/.
+/Raspberry PI/
