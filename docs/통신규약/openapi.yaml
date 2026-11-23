@@ -1,8 +1,8 @@
 openapi: 3.1.1
 info:
   title: MOBOT 공통 통신 규약
-  version: 0.1.0
-  description: 2026-11-21 채택한 첫 통합 구현 기준. /api/v1은 메인 PC 업무 서버, /device/v1은 장비 연결 모듈이 제공한다. 구현 상태·기존 API와의 대응은 동봉된 Markdown을 따른다.
+  version: 0.2.0
+  description: v0.2.0. 기존 v0.1.0 전문에 선택형 CAM2 장착 좌표 갱신 절차를 추가한다. /api/v1은 메인 PC 업무 서버, /device/v1은 장비 연결 모듈이 제공한다. 구현 상태·기존 API와의 대응은 동봉된 Markdown을 따른다.
 servers:
 - url: /
 tags:
@@ -1250,6 +1250,55 @@ paths:
         schema:
           $ref: '#/components/schemas/Id'
         description: 수신 모듈이 현재 부팅 ID와 대조한다. 세대가 달라지면 409로 거절하고 현재 상태를 다시 조회한다.
+  /device/v1/commands/{command_id}/placements/{checkpoint_id}:
+    put:
+      operationId: setAssemblyPlacement
+      summary: 대기 중인 ARM 조립 명령에 다음 부품 장착 좌표를 한 번 반영
+      description: checkpoint_id는 ARM_PLACEMENT_REQUESTED의 event_id이다. ARM은 인증·부팅 ID를 확인한 뒤 같은 체크포인트와 동일 본문의 재전송에는 저장된 성공을 반환한다. 신규 좌표는 활성 명령·회차·부품·대기 단계·보정 버전·프레임 시각과 작업 범위를 모두 대조하고 영속 저장한 뒤 수락한다.
+      tags: [장비]
+      security:
+      - controllerToken: []
+      parameters:
+      - in: path
+        name: command_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      - in: path
+        name: checkpoint_id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      - in: header
+        name: X-Expected-Boot-Id
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArmPlacement'
+      responses:
+        '204':
+          description: 해당 좌표를 기록했거나 이미 같은 본문을 기록했다. 물리적 장착 완료는 별도 확인한다.
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
   /device/v1/commands/{command_id}:
     get:
       operationId: getDeviceCommand
@@ -1707,8 +1756,21 @@ components:
           $ref: '#/components/schemas/Utc'
         online:
           type: boolean
+        capabilities:
+          type: array
+          uniqueItems: true
+          items:
+            const: CAM2_PLACEMENT_REFRESH_V1
+          description: 이 확장을 구현한 ARM만 광고한다. 필드 생략은 미지원이다.
       required: [device_id, boot_id, mode, state, cycle_id, active_command_id, last_completed_command_id, observed_at,
         online]
+      allOf:
+      - if:
+          required: [capabilities]
+        then:
+          properties:
+            device_id:
+              const: ARM
     Plant:
       type: object
       additionalProperties: false
@@ -1838,6 +1900,106 @@ components:
               $ref: '#/components/schemas/Pose'
           required: [head_pick, head_place, left_pick, left_place, right_pick, right_place]
       required: [spec, points]
+    ArmPart:
+      type: string
+      enum: [HEAD, LEFT, RIGHT]
+      description: 조립되는 몸통 기준의 머리·왼팔·오른팔 위치
+    RefreshAssembly:
+      type: object
+      additionalProperties: false
+      properties:
+        pose_policy:
+          const: REFRESH_BETWEEN_PARTS
+        part_order:
+          type: array
+          minItems: 3
+          maxItems: 3
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ArmPart'
+        initial_poses:
+          $ref: '#/components/schemas/PoseSet'
+      required: [pose_policy, part_order, initial_poses]
+    ArmPlacementRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        completed_parts:
+          type: array
+          minItems: 0
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/ArmPart'
+        next_part:
+          $ref: '#/components/schemas/ArmPart'
+        gripper_clear:
+          const: true
+      required: [completed_parts, next_part, gripper_clear]
+      description: completed_parts는 현재 명령에서 장착 확인된 part_order의 앞부분이다. next_part는 바로 다음 부품이다. 첫 장착 자세가 만료되어 재측정할 때는 빈 목록을 허용한다.
+      allOf:
+      - if:
+          properties:
+            next_part:
+              const: HEAD
+        then:
+          properties:
+            completed_parts:
+              not:
+                contains:
+                  const: HEAD
+      - if:
+          properties:
+            next_part:
+              const: LEFT
+        then:
+          properties:
+            completed_parts:
+              not:
+                contains:
+                  const: LEFT
+      - if:
+          properties:
+            next_part:
+              const: RIGHT
+        then:
+          properties:
+            completed_parts:
+              not:
+                contains:
+                  const: RIGHT
+    ArmPlacement:
+      type: object
+      additionalProperties: false
+      properties:
+        cycle_id:
+          $ref: '#/components/schemas/Id'
+        part:
+          $ref: '#/components/schemas/ArmPart'
+        camera_id:
+          const: cam2
+        frame_id:
+          type: string
+          minLength: 1
+        place:
+          $ref: '#/components/schemas/Pose'
+      required: [cycle_id, part, camera_id, frame_id, place]
+      examples:
+      - cycle_id: 04bb7adc-1e18-497f-b53a-fec5e237df86
+        part: LEFT
+        camera_id: cam2
+        frame_id: CAM2-example-024
+        place:
+          frame: ROBOT_BASE
+          tool_frame: GRIP_CENTER
+          calibration_id: example-calibration
+          x_mm: 40
+          y_mm: 20
+          z_mm: 80
+          rx_deg: 0
+          ry_deg: 0
+          rz_deg: 0
+          captured_at: '2026-11-23T01:02:03Z'
     DeviceCommand:
       type: object
       additionalProperties: false
@@ -1914,7 +2076,9 @@ components:
             cycle_id:
               $ref: '#/components/schemas/Id'
             params:
-              $ref: '#/components/schemas/PoseSet'
+              oneOf:
+              - $ref: '#/components/schemas/PoseSet'
+              - $ref: '#/components/schemas/RefreshAssembly'
       - if:
           properties:
             action:
@@ -2420,7 +2584,7 @@ components:
           description: 장비 UTC 시각. 시각 없는 UNO는 LINE 연결 모듈의 수신 UTC 시각을 사용한다.
         kind:
           type: string
-          enum: [PALLET_DISPENSED, ASSEMBLY_STATION_STOPPED, PICKUP_STATION_STOPPED, ARM_STANDBY_AFTER_ASSEMBLY, LIFT_FINISHED,
+          enum: [PALLET_DISPENSED, ASSEMBLY_STATION_STOPPED, PICKUP_STATION_STOPPED, ARM_PLACEMENT_REQUESTED, ARM_STANDBY_AFTER_ASSEMBLY, LIFT_FINISHED,
             INSPECTION_ARRIVED, DESTINATION_ARRIVED, UNLOAD_FINISHED, STANDBY_RETURNED, FEED_QR_READ, INSPECTION_CAPTURED,
             INSPECTION_UNAVAILABLE, DEVICE_PAUSED, DEVICE_RESUMED, DEVICE_FAILED]
         data:
@@ -2490,6 +2654,20 @@ components:
                 belt_command:
                   const: STOPPED
               required: [ir2_detected, belt_command]
+      - if:
+          properties:
+            kind:
+              const: ARM_PLACEMENT_REQUESTED
+        then:
+          properties:
+            device_id:
+              const: ARM
+            cycle_id:
+              $ref: '#/components/schemas/Id'
+            command_id:
+              $ref: '#/components/schemas/Id'
+            data:
+              $ref: '#/components/schemas/ArmPlacementRequest'
       - if:
           properties:
             kind:
@@ -2778,6 +2956,15 @@ components:
             data:
               $ref: '#/components/schemas/Error'
       examples:
+      - event_id: 6dfcf54f-ab03-45ef-ac6a-30429cc7b5af
+        device_id: ARM
+        boot_id: 2dbe45b3-7f97-4767-8f9a-b4405479748c
+        event_seq: 12
+        cycle_id: 04bb7adc-1e18-497f-b53a-fec5e237df86
+        command_id: d5477bce-855b-4bb8-ba0d-2cb01111c7cd
+        occurred_at: '2026-11-23T01:02:00Z'
+        kind: ARM_PLACEMENT_REQUESTED
+        data: {completed_parts: [HEAD], next_part: LEFT, gripper_clear: true}
       - event_id: 78af512d-da75-4d53-90ad-c1f74b2d4f90
         device_id: AGV
         boot_id: d7645267-f6a5-42f9-9918-5a591ea74301
