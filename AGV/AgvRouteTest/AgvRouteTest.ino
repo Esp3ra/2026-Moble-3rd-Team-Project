@@ -1,6 +1,11 @@
 /*
 팀원 공유용 AGV 서버 연동 기준
-기준 문서는 Alpha의 docs/HARDWARE_WORKFLOW.md입니다.
+기준은 main/docs의 HARDWARE_WORKFLOW.md와 통신 규약 v0.1.0입니다.
+AGV/device_adapter.py가 메인 PC에서 /device/v1 계약과 완료 이벤트를 제공하고,
+이 스케치는 기존 HTTP 경로를 통해 실제 주행·지게를 수행합니다.
+정상 PAUSE/RESUME는 단계·타이머를 보존하고, /stop·통신 장애는 취소합니다.
+X-AGV-Operation은 연결 모듈의 하위 동작 ID이며 /status에서 적용 여부를 확인합니다.
+ESP32 boot_id가 달라지면 이전 동작의 완료를 추정하거나 자동 재실행하지 않습니다.
 
 장치와 각도
   1번은 컨베이어 끝 인수 위치, 2번은 대기 및 복귀 위치입니다.
@@ -94,6 +99,8 @@ API
   POST /rc/servo?angle=N     수동 모드 정지 중 지게 각도 지정
   POST /reverse-test         후진 라인트레이싱 테스트
   POST /stop                 인증된 운영자의 정지 명령
+  POST /pause                정상 일시정지, 경로·타이머·지게 목표 보존
+  POST /resume               같은 제어 세션에서 일시정지 해제
   GET  /status               인증 후 상태 조회
 
   POST 명령은 유효한 제어 세션이 필요합니다.
@@ -228,7 +235,7 @@ constexpr Node NEIGHBORS[NODE_COUNT][4] = {
 
 enum class State : uint8_t {
   Unknown, Ready, Moving, Arrived, Stopped, WifiLost, LineLost, TimedOut,
-  ReverseTesting, ControlLost, Inspecting,
+  ReverseTesting, ControlLost, Inspecting, Paused,
 };
 enum class Phase : uint8_t { Follow, Center, Turn, Cross, ChangeDirection, ExitTurn };
 enum class WebCommand : uint8_t { SetPosition, Go, Stop, Servo, ReverseTest, Mode, RcServo };
@@ -241,6 +248,11 @@ constexpr int REVERSE_TEST_COMMAND = 41;
 constexpr int AUTO_MODE_COMMAND = 42;
 constexpr int RC_MODE_COMMAND = 43;
 constexpr int INSPECTION_COMMAND = 44;
+constexpr int PAUSE_COMMAND = 45;
+constexpr int RESUME_COMMAND = 46;
+char deviceBootId[37] = {};
+char pendingOperationId[49] = {};
+char activeOperationId[49] = {};
 constexpr int FORK_ANGLE_COMMAND_BASE = 100;
 constexpr int RC_FORK_ANGLE_COMMAND_BASE = 400;
 WebCommand modeRequest = WebCommand::Mode;
@@ -303,7 +315,7 @@ struct Sample {
 
 const char* const STATE_NAMES[] = {
   "unknown", "ready", "moving", "arrived", "stopped",
-  "wifi_lost", "line_lost", "timeout", "reverse_testing", "control_lost", "inspecting",
+  "wifi_lost", "line_lost", "timeout", "reverse_testing", "control_lost", "inspecting", "paused",
 };
 const char* const PHASE_NAMES[] = {"follow", "center", "turn", "cross", "change_direction", "exit_turn"};
 State state = State::Unknown;
@@ -332,6 +344,11 @@ bool reversing = false;
 int motorLeft = 101;
 int motorRight = 101;
 unsigned long motorSentAt = 0;
+State pausedState = State::Unknown;
+bool pausedForkMoving = false;
+unsigned long pausedAt = 0;
+int pausedMotorLeft = 0;
+int pausedMotorRight = 0;
 
 const char CONTROL_SCRIPT[] = R"JS(
 (() => {
@@ -1140,11 +1157,44 @@ void driveAlongLine(int speed) {
 
 void stopTrip(State reason) {
   drive(0, 0, true);
-  if (state == State::Moving) {
+  if (state == State::Moving || (state == State::Paused && pausedState == State::Moving)) {
     location = NO_NODE;
   }
   destination = NO_NODE;
   publish(reason);
+}
+
+bool isDriving(State current);
+
+// Only the loop mutates route/fork state. A normal pause freezes elapsed time;
+// the independent control watchdog still runs and can cancel this snapshot.
+void pauseTrip(unsigned long now) {
+  if (state == State::Paused) return;
+  pausedState = state;
+  pausedAt = now;
+  pausedMotorLeft = motorLeft;
+  pausedMotorRight = motorRight;
+  pausedForkMoving = forkMoving.load();
+  forkMoving.store(false);
+  clearRcCommand();
+  drive(0, 0, true);
+  publish(State::Paused);
+}
+
+void resumeTrip(unsigned long now) {
+  if (state != State::Paused) return;
+  const unsigned long elapsed = now - pausedAt;
+  segmentAt += elapsed;
+  phaseAt += elapsed;
+  lineLostAt += elapsed;
+  rearCorrectionStartedAt += elapsed;
+  forkStartedAt += elapsed;
+  forkUpdatedAt += elapsed;
+  forkMoving.store(pausedForkMoving);
+  state = pausedState;
+  // publish(Moving) would reset lastDetected. Preserve the complete route state.
+  publishStatus();
+  if (!rcMode.load() && isDriving(state)) drive(pausedMotorLeft, pausedMotorRight, true);
 }
 
 bool isDriving(State current) {
@@ -1692,11 +1742,15 @@ esp_err_t showStatus(httpd_req_t* request) {
   if (!requireControlKey(request)) return ESP_OK;
   const uint32_t value = publicStatus.load();
   const bool moving = (value & 0x0f) == static_cast<uint32_t>(State::Moving);
-  char body[512];
-  snprintf(body, sizeof(body), "{\"state\":\"%s\",\"position\":%u,\"target\":%u,\"servo_angle\":%d,\"fork_moving\":%s,"
+  char body[768];
+  char operation[sizeof(activeOperationId)];
+  portENTER_CRITICAL(&controlLock);
+  memcpy(operation, activeOperationId, sizeof(operation));
+  portEXIT_CRITICAL(&controlLock);
+  snprintf(body, sizeof(body), "{\"boot_id\":\"%s\",\"operation_id\":\"%s\",\"state\":\"%s\",\"position\":%u,\"target\":%u,\"servo_angle\":%d,\"fork_moving\":%s,"
     "\"reverse_readings\":%d,\"mode\":\"%s\",\"next_node\":%u,\"phase\":\"%s\",\"reversing\":%s,\"turn_right\":%s,\"last_detected\":%u,"
     "\"control_connected\":%s,\"heartbeat_timeout_ms\":%lu,\"inspection_trip\":%s}",
-    STATE_NAMES[value & 0x0f], static_cast<unsigned>((value >> 4) & 0x0f),
+    deviceBootId, operation, STATE_NAMES[value & 0x0f], static_cast<unsigned>((value >> 4) & 0x0f),
     static_cast<unsigned>((value >> 8) & 0x0f), servoAngle.load(), forkMoving.load() ? "true" : "false",
     reverseTestReadings.load(), rcMode.load() ? "rc" : "auto",
     static_cast<unsigned>((value >> 12) & 0x0f), moving ? PHASE_NAMES[(value >> 16) & 0x07] : "idle",
@@ -1714,10 +1768,18 @@ esp_err_t queueCommand(httpd_req_t* request, int command) {
     httpd_resp_set_status(request, "409 Conflict");
     return httpd_resp_sendstr(request, "Invalid controller ID");
   }
+  char operation[sizeof(pendingOperationId)] = {};
+  const size_t operationLength = httpd_req_get_hdr_value_len(request, "X-AGV-Operation");
+  if (operationLength && (operationLength >= sizeof(operation) ||
+      httpd_req_get_hdr_value_str(request, "X-AGV-Operation", operation, sizeof(operation)) != ESP_OK ||
+      !ControlSession::validController(operation))) {
+    return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid operation ID");
+  }
   int empty = 0;
   portENTER_CRITICAL(&controlLock);
   const bool queued = controlSession.permits(controller, millis()) &&
     pendingCommand.compare_exchange_strong(empty, command);
+  if (queued) memcpy(pendingOperationId, operation, sizeof(operation));
   portEXIT_CRITICAL(&controlLock);
   if (!queued) {
     httpd_resp_set_status(request, "409 Conflict");
@@ -1803,12 +1865,26 @@ esp_err_t heartbeatRequest(httpd_req_t* request) {
 esp_err_t inspectionRequest(httpd_req_t* request) {
   if (!requireControlKey(request) || !requireController(request)) return ESP_OK;
   const auto value = publicStatus.load();
-  if (rcMode.load() || isDriving(static_cast<State>(value & 0x0f)) ||
+  if (rcMode.load() || (value & 0x0f) == static_cast<uint32_t>(State::Paused) || isDriving(static_cast<State>(value & 0x0f)) ||
       forkMoving.load() || ((value >> 4) & 0x0f) != POINT_2 + 1) {
     httpd_resp_set_status(request, "409 Conflict");
     return httpd_resp_sendstr(request, "Inspection departure requires automatic mode at point 2");
   }
   return queueCommand(request, INSPECTION_COMMAND);
+}
+
+esp_err_t pauseRequest(httpd_req_t* request) {
+  if (!requireControlKey(request) || !requireController(request)) return ESP_OK;
+  return queueCommand(request, PAUSE_COMMAND);
+}
+
+esp_err_t resumeRequest(httpd_req_t* request) {
+  if (!requireControlKey(request) || !requireController(request)) return ESP_OK;
+  if ((publicStatus.load() & 0x0f) != static_cast<uint32_t>(State::Paused)) {
+    httpd_resp_set_status(request, "409 Conflict");
+    return httpd_resp_sendstr(request, "No normal pause to resume");
+  }
+  return queueCommand(request, RESUME_COMMAND);
 }
 
 void updateControlWatchdog(unsigned long) {
@@ -1821,7 +1897,7 @@ void updateControlWatchdog(unsigned long) {
   portENTER_CRITICAL(&motionLock);
   const bool rcMoving = requestedMotion != Motion::Stop;
   portEXIT_CRITICAL(&motionLock);
-  const bool active = isDriving(state) || forkMoving.load() || rcMoving;
+  const bool active = isDriving(state) || forkMoving.load() || rcMoving || state == State::Paused;
   pendingCommand.store(0);
   forkMoving.store(false);
   clearRcCommand();
@@ -1848,6 +1924,11 @@ esp_err_t handleCommand(httpd_req_t* request) {
   }
 
   if (!requireController(request)) return ESP_OK;
+
+  if ((publicStatus.load() & 0x0f) == static_cast<uint32_t>(State::Paused)) {
+    httpd_resp_set_status(request, "409 Conflict");
+    return httpd_resp_sendstr(request, "Resume or cancel the paused operation first");
+  }
 
   if (action == WebCommand::Mode) {
     char query[16];
@@ -2000,7 +2081,8 @@ esp_err_t handleControlSocket(httpd_req_t* request) {
     reply.len = sizeof(inactive) - 1;
     return httpd_ws_send_frame(request, &reply);
   }
-  if (pendingCommand.load() != 0 || rcStopPending || forkMoving.load()) {
+  if (pendingCommand.load() != 0 || rcStopPending || forkMoving.load() ||
+      (publicStatus.load() & 0x0f) == static_cast<uint32_t>(State::Paused)) {
     portEXIT_CRITICAL(&motionLock);
     portEXIT_CRITICAL(&controlLock);
     return ESP_OK;
@@ -2039,7 +2121,7 @@ bool startControlServer() {
     static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.lru_purge_enable = true;
-  config.max_uri_handlers = 15;
+  config.max_uri_handlers = 17;
   httpd_handle_t server = nullptr;
   if (httpd_start(&server, &config) != ESP_OK) return false;
   const httpd_uri_t routes[] = {
@@ -2048,6 +2130,8 @@ bool startControlServer() {
     {.uri = "/control/session", .method = HTTP_POST, .handler = controlSessionRequest, .user_ctx = nullptr},
     {.uri = "/heartbeat", .method = HTTP_POST, .handler = heartbeatRequest, .user_ctx = nullptr},
     {.uri = "/inspection", .method = HTTP_POST, .handler = inspectionRequest, .user_ctx = nullptr},
+    {.uri = "/pause", .method = HTTP_POST, .handler = pauseRequest, .user_ctx = nullptr},
+    {.uri = "/resume", .method = HTTP_POST, .handler = resumeRequest, .user_ctx = nullptr},
     {.uri = "/control.js", .method = HTTP_GET, .handler = showControlScript, .user_ctx = nullptr},
     {.uri = "/position", .method = HTTP_POST, .handler = handleCommand, .user_ctx = &setPositionRequest},
     {.uri = "/go", .method = HTTP_POST, .handler = handleCommand, .user_ctx = &goRequest},
@@ -2069,6 +2153,14 @@ bool startControlServer() {
 }
 
 void setup() {
+  uint8_t boot[16];
+  esp_fill_random(boot, sizeof(boot));
+  boot[6] = (boot[6] & 0x0f) | 0x40;
+  boot[8] = (boot[8] & 0x3f) | 0x80;
+  snprintf(deviceBootId, sizeof(deviceBootId),
+    "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+    boot[0], boot[1], boot[2], boot[3], boot[4], boot[5], boot[6], boot[7],
+    boot[8], boot[9], boot[10], boot[11], boot[12], boot[13], boot[14], boot[15]);
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, MOTOR_RX, MOTOR_TX);
   for (const LineSensor& sensor : SENSORS) pinMode(sensor.pin, INPUT);
@@ -2119,17 +2211,27 @@ void loop() {
       clearRcCommand();
       drive(0, 0);
     }
-    if (isDriving(state)) stopTrip(State::WifiLost);
+    if (isDriving(state) || state == State::Paused) stopTrip(State::WifiLost);
     delay(1);
     return;
   }
 
   updateControlWatchdog(now);
+  char operation[sizeof(pendingOperationId)] = {};
+  portENTER_CRITICAL(&controlLock);
   int command = pendingCommand.exchange(0);
+  memcpy(operation, pendingOperationId, sizeof(operation));
+  pendingOperationId[0] = '\0';
+  portEXIT_CRITICAL(&controlLock);
   if (command != STOP_COMMAND && !sessionConnected(now)) command = 0;
   // Recheck expiry after draining the queue so a late request cannot restart motion.
   updateControlWatchdog(now);
   if (command != STOP_COMMAND && !sessionConnected(now)) command = 0;
+  if (command != 0) {
+    portENTER_CRITICAL(&controlLock);
+    memcpy(activeOperationId, operation, sizeof(operation));
+    portEXIT_CRITICAL(&controlLock);
+  }
   if (command == STOP_COMMAND) {
     // 마지막 각도의 PWM을 유지한다.
     forkMoving.store(false);
@@ -2137,7 +2239,11 @@ void loop() {
       clearRcCommand();
       drive(0, 0, true);
     }
-    if (isDriving(state)) stopTrip(State::Stopped);
+    if (isDriving(state) || state == State::Paused) stopTrip(State::Stopped);
+  } else if (command == PAUSE_COMMAND) {
+    pauseTrip(now);
+  } else if (command == RESUME_COMMAND) {
+    resumeTrip(now);
   } else if (command == AUTO_MODE_COMMAND || command == RC_MODE_COMMAND) {
     const bool manual = command == RC_MODE_COMMAND;
     if (manual != rcMode.load()) {
@@ -2177,6 +2283,10 @@ void loop() {
     }
   }
 
+  if (state == State::Paused) {
+    delay(1);
+    return;
+  }
   updateForkMove(now);
   if (rcMode.load()) {
     if (now - lastControl >= MOTOR_UPDATE_MS) {

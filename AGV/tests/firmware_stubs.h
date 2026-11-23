@@ -95,6 +95,9 @@ int copyHttpValue(const std::string& value, char* output, size_t size) {
     std::memcpy(output,value.c_str(),value.size()+1);
     return ESP_OK;
 }
+size_t httpd_req_get_hdr_value_len(httpd_req_t* request,const char* key) {
+    return request->headers.count(key) ? request->headers.at(key).size() : 0;
+}
 int httpd_req_get_hdr_value_str(httpd_req_t* request,const char* key,char* output,size_t size) {
     auto entry=request->headers.find(key);
     if(entry==request->headers.end()) return ESP_ERR_NOT_FOUND;

@@ -21,7 +21,9 @@ jobs:
       - name: Test firmware control and routes with fake hardware
         run: python3 AGV/tests/run_firmware_tests.py
       - name: Test central server client
-        run: python3 -m unittest discover -s AGV/tests -p 'test_*.py'
+        run: |
+          python3 -m pip install -r AGV/requirements.txt
+          python3 -m unittest discover -s AGV/tests -p 'test_*.py'
       - uses: arduino/setup-arduino-cli@v2
         with:
           version: '1.6.0'

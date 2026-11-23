@@ -18,6 +18,8 @@ void fixture() {
     ms += 10000;
     controlSession = ControlSession(CONTROL_KEY, SERVER_HEARTBEAT_TIMEOUT_MS);
     pendingCommand.store(0);
+    pendingOperationId[0] = activeOperationId[0] = '\0';
+    strcpy(deviceBootId, "d7645267-f6a5-42f9-9918-5a591ea74301");
     rcMode.store(false);
     requestedMotion = Motion::Stop;
     rcStopPending = false;
@@ -359,10 +361,98 @@ void sessionEdgeTests() {
     puts("Empty-key failure, controller validation, clock wraparound, and explicit reconnect tests passed.");
 }
 
+void pauseAndOperationTests() {
+    fixture();
+    auto denied = request(false);
+    pauseRequest(&denied);
+    assert(denied.status == "401 Unauthorized");
+    denied = request(true,"other");
+    pauseRequest(&denied);
+    assert(denied.status == "409 Conflict");
+    auto resume = request();
+    resumeRequest(&resume);
+    assert(resume.status == "409 Conflict");
+
+    place(POINT_2,POINT_3);
+    startTurn(ms,false,TURN_SPEED);
+    sawCenterLeave = true;
+    matchReads = 2;
+    const auto oldNext = nextIndex;
+    const auto oldPhaseAt = phaseAt;
+    const auto oldSegmentAt = segmentAt;
+    const auto oldLeft = motorLeft, oldRight = motorRight;
+    auto pause = request();
+    pause.headers["X-AGV-Operation"] = "pause-uuid";
+    pauseRequest(&pause);
+    loop();
+    assert(state == State::Paused && motorLeft == 0 && motorRight == 0);
+    assert(strcmp(activeOperationId,"pause-uuid") == 0);
+    const auto began = pausedAt;
+    healthyTime(5000);
+    loop();
+    assert(state == State::Paused && nextIndex == oldNext && phase == Phase::Turn);
+    auto blocked = request();
+    blocked.user_ctx = &goRequest;blocked.query = "point=4";
+    handleCommand(&blocked);
+    assert(blocked.status == "409 Conflict");
+    resume = request();
+    resume.headers["X-AGV-Operation"] = "resume-uuid";
+    resumeRequest(&resume);
+    // Exercise the exact resume function before loop samples another line.
+    pendingCommand.store(0);
+    const auto resumed = ms;
+    resumeTrip(resumed);
+    assert(state == State::Moving && phase == Phase::Turn && nextIndex == oldNext);
+    assert(sawCenterLeave && matchReads == 2);
+    assert(phaseAt == oldPhaseAt + resumed - began);
+    assert(segmentAt == oldSegmentAt + resumed - began);
+    assert(motorLeft == oldLeft && motorRight == oldRight);
+
+    fixture();
+    startForkMove(110,ms);
+    healthyTime(400);updateForkMove(ms);
+    const auto angle = forkAngle;
+    const auto start = forkStartedAt;
+    pauseTrip(ms);
+    const auto forkPausedAt = ms;
+    healthyTime(5000);loop();
+    assert(forkAngle == angle && !forkMoving.load());
+    resumeTrip(ms);
+    assert(forkMoving && forkStartedAt == start + ms - forkPausedAt);
+    updateForkMove(ms);
+    assert(fabsf(forkAngle-angle) < 0.01f);
+    healthyTime(FORK_MOVE_MS);updateForkMove(ms);
+    assert(!forkMoving && servoAngle == 110);
+
+    // Watchdog/Wi-Fi cancellation must invalidate a paused route as well.
+    fixture();place(POINT_2,POINT_3);pauseTrip(ms);
+    ms += SERVER_HEARTBEAT_TIMEOUT_MS;loop();
+    assert(state == State::ControlLost && location == NO_NODE);
+    resume = request();resumeRequest(&resume);
+    assert(resume.status == "409 Conflict");
+    fixture();place(POINT_2,POINT_3);pauseTrip(ms);
+    WiFi.connected=false;loop();
+    assert(state == State::WifiLost && location == NO_NODE);
+
+    fixture();
+    auto move = request();
+    move.headers["X-AGV-Operation"] = "operation-uuid";
+    move.user_ctx=&goRequest;move.query="point=1";
+    handleCommand(&move);assert(move.status == "202 Accepted");
+    assert(activeOperationId[0] == '\0');
+    loop();
+    assert(state == State::Moving && strcmp(activeOperationId,"operation-uuid") == 0);
+    auto status = request();showStatus(&status);
+    assert(status.body.find("\"boot_id\":\"d7645267-f6a5-42f9-9918-5a591ea74301\"") != std::string::npos);
+    assert(status.body.find("\"operation_id\":\"operation-uuid\"") != std::string::npos);
+    puts("Pause/resume preserves turn/servo/timers; expiry cancels pause; applied operation and boot evidence passed.");
+}
+
 int main() {
     controlAndTimeoutTests();
     websocketTests();
     inspectionAndRouteTests();
     sessionEdgeTests();
+    pauseAndOperationTests();
     puts("All tests use fake GPIO, motor UART, servo PWM, HTTP requests, sockets, and time. No physical device was driven.");
 }
