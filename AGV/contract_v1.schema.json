@@ -1,0 +1,2191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Exact shared contract schema closure from main 216115315c72f726f0c0aa77d13f82f75436dd72 docs/통신규약/openapi.yaml v0.2.0. AGV supports AGV commands only; ARM extensions are included solely as shared schema dependencies.",
+  "components": {
+    "schemas": {
+      "ArmPart": {
+        "type": "string",
+        "enum": [
+          "HEAD",
+          "LEFT",
+          "RIGHT"
+        ],
+        "description": "조립되는 몸통 기준의 머리·왼팔·오른팔 위치"
+      },
+      "ArmPlacementRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "completed_parts": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/ArmPart"
+            }
+          },
+          "next_part": {
+            "$ref": "#/components/schemas/ArmPart"
+          },
+          "gripper_clear": {
+            "const": true
+          }
+        },
+        "required": [
+          "completed_parts",
+          "next_part",
+          "gripper_clear"
+        ],
+        "description": "completed_parts는 현재 명령에서 장착 확인된 part_order의 앞부분이다. next_part는 바로 다음 부품이다. 첫 장착 자세가 만료되어 재측정할 때는 빈 목록을 허용한다.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "next_part": {
+                  "const": "HEAD"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "completed_parts": {
+                  "not": {
+                    "contains": {
+                      "const": "HEAD"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "next_part": {
+                  "const": "LEFT"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "completed_parts": {
+                  "not": {
+                    "contains": {
+                      "const": "LEFT"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "next_part": {
+                  "const": "RIGHT"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "completed_parts": {
+                  "not": {
+                    "contains": {
+                      "const": "RIGHT"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "BuildSpec": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target_head_id": {
+            "type": "string",
+            "enum": [
+              "H1",
+              "H2"
+            ]
+          },
+          "target_arm_l_id": {
+            "type": "string",
+            "enum": [
+              "L1",
+              "L2",
+              "L3"
+            ]
+          },
+          "target_arm_r_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3"
+            ]
+          }
+        },
+        "required": [
+          "target_head_id",
+          "target_arm_l_id",
+          "target_arm_r_id"
+        ]
+      },
+      "CommandResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "cycle_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device_id": {
+            "$ref": "#/components/schemas/Device"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CommandState"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Utc"
+          },
+          "result_event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Error"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "command_id",
+          "cycle_id",
+          "device_id",
+          "state",
+          "updated_at",
+          "result_event_id",
+          "error"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "COMPLETED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "result_event_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "error": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "FAILED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "error": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "enum": [
+                    "ACCEPTED",
+                    "RUNNING"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "result_event_id": {
+                  "type": "null"
+                },
+                "error": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "command_id": "cccf57f2-133b-4aab-ad45-18b8004b240a",
+            "device_id": "AGV",
+            "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+            "state": "ACCEPTED",
+            "updated_at": "2026-11-21T04:10:00Z",
+            "result_event_id": null,
+            "error": null
+          },
+          {
+            "command_id": "cccf57f2-133b-4aab-ad45-18b8004b240a",
+            "device_id": "AGV",
+            "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+            "state": "COMPLETED",
+            "updated_at": "2026-11-21T04:10:14Z",
+            "result_event_id": "78af512d-da75-4d53-90ad-c1f74b2d4f90",
+            "error": null
+          }
+        ]
+      },
+      "CommandState": {
+        "type": "string",
+        "enum": [
+          "ACCEPTED",
+          "RUNNING",
+          "COMPLETED",
+          "FAILED",
+          "STOPPED",
+          "UNKNOWN"
+        ]
+      },
+      "Destination": {
+        "type": "integer",
+        "enum": [
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "Device": {
+        "type": "string",
+        "enum": [
+          "LINE",
+          "ARM",
+          "AGV"
+        ]
+      },
+      "DeviceCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "device_id": {
+            "$ref": "#/components/schemas/Device"
+          },
+          "cycle_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "DISPENSE",
+              "MOVE_TO_ASSEMBLY",
+              "MOVE_TO_PICKUP",
+              "ASSEMBLE",
+              "PICK_UP",
+              "GO_TO_INSPECTION",
+              "DELIVER",
+              "UNLOAD",
+              "RETURN_STANDBY",
+              "PAUSE",
+              "RESUME"
+            ]
+          },
+          "params": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command_id",
+          "device_id",
+          "cycle_id",
+          "action",
+          "params"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "DISPENSE"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "LINE"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {},
+                  "required": []
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "MOVE_TO_ASSEMBLY"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "LINE"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {},
+                  "required": []
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "MOVE_TO_PICKUP"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "LINE"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {},
+                  "required": []
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "ASSEMBLE"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "ARM"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "params": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PoseSet"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RefreshAssembly"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "PICK_UP"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {},
+                  "required": []
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "GO_TO_INSPECTION"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {},
+                  "required": []
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "DELIVER"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "destination": {
+                      "$ref": "#/components/schemas/Destination"
+                    },
+                    "inspection_id": {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  },
+                  "required": [
+                    "destination",
+                    "inspection_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "UNLOAD"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "destination": {
+                      "$ref": "#/components/schemas/Destination"
+                    },
+                    "inspection_id": {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  },
+                  "required": [
+                    "destination",
+                    "inspection_id"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "RETURN_STANDBY"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {},
+                  "required": []
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "PAUSE"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {},
+                  "required": []
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "RESUME"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "params": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "pause_command_id": {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  },
+                  "required": [
+                    "pause_command_id"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "command_id": "cccf57f2-133b-4aab-ad45-18b8004b240a",
+            "device_id": "AGV",
+            "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+            "action": "GO_TO_INSPECTION",
+            "params": {}
+          }
+        ]
+      },
+      "DeviceEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "device_id": {
+            "$ref": "#/components/schemas/Producer"
+          },
+          "boot_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "event_seq": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cycle_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurred_at": {
+            "$ref": "#/components/schemas/Utc",
+            "description": "장비 UTC 시각. 시각 없는 UNO는 LINE 연결 모듈의 수신 UTC 시각을 사용한다."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "PALLET_DISPENSED",
+              "ASSEMBLY_STATION_STOPPED",
+              "PICKUP_STATION_STOPPED",
+              "ARM_PLACEMENT_REQUESTED",
+              "ARM_STANDBY_AFTER_ASSEMBLY",
+              "LIFT_FINISHED",
+              "INSPECTION_ARRIVED",
+              "DESTINATION_ARRIVED",
+              "UNLOAD_FINISHED",
+              "STANDBY_RETURNED",
+              "FEED_QR_READ",
+              "INSPECTION_CAPTURED",
+              "INSPECTION_UNAVAILABLE",
+              "DEVICE_PAUSED",
+              "DEVICE_RESUMED",
+              "DEVICE_FAILED"
+            ]
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "event_id",
+          "device_id",
+          "boot_id",
+          "event_seq",
+          "cycle_id",
+          "command_id",
+          "occurred_at",
+          "kind",
+          "data"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "PALLET_DISPENSED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "LINE"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "evidence": {
+                      "type": "string",
+                      "enum": [
+                        "SENSOR",
+                        "TIMER",
+                        "OPERATOR"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "evidence"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "ASSEMBLY_STATION_STOPPED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "LINE"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "ir1_detected": {
+                      "const": true
+                    },
+                    "belt_command": {
+                      "type": "string",
+                      "enum": [
+                        "STOPPED"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ir1_detected",
+                    "belt_command"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "PICKUP_STATION_STOPPED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "LINE"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "ir2_detected": {
+                      "const": true
+                    },
+                    "belt_command": {
+                      "const": "STOPPED"
+                    }
+                  },
+                  "required": [
+                    "ir2_detected",
+                    "belt_command"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "ARM_PLACEMENT_REQUESTED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "ARM"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "$ref": "#/components/schemas/ArmPlacementRequest"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "ARM_STANDBY_AFTER_ASSEMBLY"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "ARM"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "standby_verified": {
+                      "const": true
+                    },
+                    "assembly_steps_verified": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "standby_verified",
+                    "assembly_steps_verified"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "LIFT_FINISHED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "station": {
+                      "const": 1
+                    },
+                    "fork_target_deg": {
+                      "const": 110
+                    },
+                    "fork_moving": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "station",
+                    "fork_target_deg",
+                    "fork_moving"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "INSPECTION_ARRIVED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "state": {
+                      "const": "inspecting"
+                    }
+                  },
+                  "required": [
+                    "state"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "DESTINATION_ARRIVED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "destination": {
+                      "type": "integer",
+                      "enum": [
+                        3,
+                        4,
+                        5,
+                        6,
+                        7
+                      ]
+                    }
+                  },
+                  "required": [
+                    "destination"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "UNLOAD_FINISHED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "destination": {
+                      "type": "integer",
+                      "enum": [
+                        3,
+                        4,
+                        5,
+                        6,
+                        7
+                      ]
+                    },
+                    "fork_target_deg": {
+                      "const": 60
+                    },
+                    "fork_moving": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "destination",
+                    "fork_target_deg",
+                    "fork_moving"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "STANDBY_RETURNED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "AGV"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "station": {
+                      "const": 2
+                    },
+                    "fork_target_deg": {
+                      "const": 85
+                    },
+                    "fork_moving": {
+                      "const": false
+                    }
+                  },
+                  "required": [
+                    "station",
+                    "fork_target_deg",
+                    "fork_moving"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "FEED_QR_READ"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "VISION"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "type": "null"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "frame_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pallet_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^PALLET-0[1-8]$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "attempt": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3
+                    },
+                    "read_id": {
+                      "$ref": "#/components/schemas/Id"
+                    }
+                  },
+                  "required": [
+                    "frame_id",
+                    "pallet_id",
+                    "attempt",
+                    "read_id"
+                  ],
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "frame_id": {
+                            "const": null
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "pallet_id": {
+                            "type": "null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "INSPECTION_CAPTURED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "VISION"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "type": "null"
+                },
+                "data": {
+                  "$ref": "#/components/schemas/VisionInspection"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "INSPECTION_UNAVAILABLE"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "VISION"
+                },
+                "cycle_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "command_id": {
+                  "type": "null"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "inspection_id": {
+                      "$ref": "#/components/schemas/Id"
+                    },
+                    "reason": {
+                      "const": "NO_FRAME"
+                    }
+                  },
+                  "required": [
+                    "inspection_id",
+                    "reason"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "DEVICE_PAUSED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "$ref": "#/components/schemas/Device"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "device_id": {
+                        "const": "LINE"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "belt_output_stopped": {
+                            "const": true
+                          },
+                          "actuator_output_stopped": {
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "belt_output_stopped",
+                          "actuator_output_stopped"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "device_id": {
+                        "const": "ARM"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "arm_motion_stopped": {
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "arm_motion_stopped"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "device_id": {
+                        "const": "AGV"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "data": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "drive_stopped": {
+                            "const": true
+                          },
+                          "fork_motion_stopped": {
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "drive_stopped",
+                          "fork_motion_stopped"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "DEVICE_RESUMED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "$ref": "#/components/schemas/Device"
+                },
+                "command_id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "data": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {},
+                  "required": []
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "DEVICE_FAILED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "$ref": "#/components/schemas/Device"
+                },
+                "data": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        ],
+        "examples": [
+          {
+            "event_id": "6dfcf54f-ab03-45ef-ac6a-30429cc7b5af",
+            "device_id": "ARM",
+            "boot_id": "2dbe45b3-7f97-4767-8f9a-b4405479748c",
+            "event_seq": 12,
+            "cycle_id": "04bb7adc-1e18-497f-b53a-fec5e237df86",
+            "command_id": "d5477bce-855b-4bb8-ba0d-2cb01111c7cd",
+            "occurred_at": "2026-11-23T01:02:00Z",
+            "kind": "ARM_PLACEMENT_REQUESTED",
+            "data": {
+              "completed_parts": [
+                "HEAD"
+              ],
+              "next_part": "LEFT",
+              "gripper_clear": true
+            }
+          },
+          {
+            "event_id": "78af512d-da75-4d53-90ad-c1f74b2d4f90",
+            "device_id": "AGV",
+            "boot_id": "d7645267-f6a5-42f9-9918-5a591ea74301",
+            "event_seq": 18,
+            "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+            "command_id": "cccf57f2-133b-4aab-ad45-18b8004b240a",
+            "occurred_at": "2026-11-21T04:10:14Z",
+            "kind": "INSPECTION_ARRIVED",
+            "data": {
+              "state": "inspecting"
+            }
+          },
+          {
+            "event_id": "0296c121-b2cd-4374-8765-7f0f047ab7ed",
+            "device_id": "VISION",
+            "boot_id": "be98d5f2-f621-4a12-9eed-72b09c5b3b8f",
+            "event_seq": 3,
+            "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+            "command_id": null,
+            "occurred_at": "2026-11-21T04:10:15Z",
+            "kind": "INSPECTION_CAPTURED",
+            "data": {
+              "inspection_id": "e615e433-ade0-4230-9502-644bf5adf080",
+              "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+              "frame_id": "CAM3-0018",
+              "captured_at": "2026-11-21T04:10:15Z",
+              "image_ref": "inspection-image-0018",
+              "model_version": "demo-model",
+              "calibration_id": "demo-cal",
+              "qr_read": "PALLET-04",
+              "head": {
+                "observation": "SEEN",
+                "observed_id": "H1",
+                "confidence": 0.96
+              },
+              "left": {
+                "observation": "MISSING",
+                "observed_id": null,
+                "confidence": null
+              },
+              "right": {
+                "observation": "SEEN",
+                "observed_id": "R1",
+                "confidence": 0.96
+              }
+            }
+          }
+        ]
+      },
+      "DeviceStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "device_id": {
+            "$ref": "#/components/schemas/Device"
+          },
+          "boot_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "AUTO",
+              "MANUAL"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "IDLE",
+              "BUSY",
+              "PAUSED",
+              "FAULT",
+              "UNKNOWN"
+            ]
+          },
+          "cycle_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "active_command_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_completed_command_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observed_at": {
+            "$ref": "#/components/schemas/Utc"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "capabilities": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "const": "CAM2_PLACEMENT_REFRESH_V1"
+            },
+            "description": "이 확장을 구현한 ARM만 광고한다. 필드 생략은 미지원이다."
+          }
+        },
+        "required": [
+          "device_id",
+          "boot_id",
+          "mode",
+          "state",
+          "cycle_id",
+          "active_command_id",
+          "last_completed_command_id",
+          "observed_at",
+          "online"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "capabilities"
+              ]
+            },
+            "then": {
+              "properties": {
+                "device_id": {
+                  "const": "ARM"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "BAD_REQUEST",
+              "UNAUTHORIZED",
+              "FORBIDDEN",
+              "NOT_FOUND",
+              "CONFLICT",
+              "STALE_CYCLE",
+              "BAD_TRANSITION",
+              "OUT_OF_STOCK",
+              "INVALID_ADDRESS",
+              "DEVICE_UNAVAILABLE",
+              "RECONCILE_REQUIRED",
+              "STALE_CALIBRATION",
+              "INTERNAL_ERROR",
+              "RATE_LIMITED",
+              "UNSUPPORTED_VERSION"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "retry": {
+            "type": "string",
+            "enum": [
+              "NONE",
+              "QUERY_FIRST",
+              "SAME_REQUEST",
+              "OPERATOR"
+            ]
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "device_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "cycle_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "command_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retry",
+          "trace_id"
+        ],
+        "examples": [
+          {
+            "code": "RECONCILE_REQUIRED",
+            "message": "하역 완료 여부를 확인하세요.",
+            "retry": "OPERATOR",
+            "trace_id": "f82afe44-7f3c-4ff0-9a09-b248440556d2",
+            "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+            "command_id": "cccf57f2-133b-4aab-ad45-18b8004b240a"
+          }
+        ]
+      },
+      "EventAck": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "RECORDED",
+              "DUPLICATE",
+              "HELD_FOR_REVIEW"
+            ]
+          }
+        },
+        "required": [
+          "event_id",
+          "disposition"
+        ]
+      },
+      "EventPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceEvent"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "불투명한 페이지 커서. 재시작 전후 조회 구간은 boot_id로 한정한다."
+          }
+        },
+        "required": [
+          "events",
+          "next_cursor"
+        ]
+      },
+      "Id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "Pose": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "frame": {
+            "const": "ROBOT_BASE"
+          },
+          "tool_frame": {
+            "const": "GRIP_CENTER"
+          },
+          "calibration_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "x_mm": {
+            "type": "number"
+          },
+          "y_mm": {
+            "type": "number"
+          },
+          "z_mm": {
+            "type": "number"
+          },
+          "rx_deg": {
+            "type": "number"
+          },
+          "ry_deg": {
+            "type": "number"
+          },
+          "rz_deg": {
+            "type": "number"
+          },
+          "captured_at": {
+            "$ref": "#/components/schemas/Utc"
+          }
+        },
+        "required": [
+          "frame",
+          "tool_frame",
+          "calibration_id",
+          "x_mm",
+          "y_mm",
+          "z_mm",
+          "rx_deg",
+          "ry_deg",
+          "rz_deg",
+          "captured_at"
+        ]
+      },
+      "PoseSet": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "spec": {
+            "$ref": "#/components/schemas/BuildSpec"
+          },
+          "points": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "head_pick": {
+                "$ref": "#/components/schemas/Pose"
+              },
+              "head_place": {
+                "$ref": "#/components/schemas/Pose"
+              },
+              "left_pick": {
+                "$ref": "#/components/schemas/Pose"
+              },
+              "left_place": {
+                "$ref": "#/components/schemas/Pose"
+              },
+              "right_pick": {
+                "$ref": "#/components/schemas/Pose"
+              },
+              "right_place": {
+                "$ref": "#/components/schemas/Pose"
+              }
+            },
+            "required": [
+              "head_pick",
+              "head_place",
+              "left_pick",
+              "left_place",
+              "right_pick",
+              "right_place"
+            ]
+          }
+        },
+        "required": [
+          "spec",
+          "points"
+        ]
+      },
+      "Producer": {
+        "type": "string",
+        "enum": [
+          "LINE",
+          "ARM",
+          "AGV",
+          "VISION"
+        ]
+      },
+      "RefreshAssembly": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pose_policy": {
+            "const": "REFRESH_BETWEEN_PARTS"
+          },
+          "part_order": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/ArmPart"
+            }
+          },
+          "initial_poses": {
+            "$ref": "#/components/schemas/PoseSet"
+          }
+        },
+        "required": [
+          "pose_policy",
+          "part_order",
+          "initial_poses"
+        ]
+      },
+      "Utc": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "Z$"
+      },
+      "VisionInspection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "inspection_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "cycle_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "frame_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "captured_at": {
+            "$ref": "#/components/schemas/Utc"
+          },
+          "image_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "model_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "calibration_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "qr_read": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "head": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "type": "string",
+                "enum": [
+                  "SEEN",
+                  "MISSING",
+                  "UNKNOWN"
+                ]
+              },
+              "observed_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "H1",
+                      "H2",
+                      "L1",
+                      "L2",
+                      "L3",
+                      "R1",
+                      "R2",
+                      "R3"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "confidence": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "observation",
+              "observed_id",
+              "confidence"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "observation": {
+                      "const": "SEEN"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "observed_id": {
+                      "type": "string",
+                      "enum": [
+                        "H1",
+                        "H2",
+                        "L1",
+                        "L2",
+                        "L3",
+                        "R1",
+                        "R2",
+                        "R3"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "observed_id": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "left": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "type": "string",
+                "enum": [
+                  "SEEN",
+                  "MISSING",
+                  "UNKNOWN"
+                ]
+              },
+              "observed_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "H1",
+                      "H2",
+                      "L1",
+                      "L2",
+                      "L3",
+                      "R1",
+                      "R2",
+                      "R3"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "confidence": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "observation",
+              "observed_id",
+              "confidence"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "observation": {
+                      "const": "SEEN"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "observed_id": {
+                      "type": "string",
+                      "enum": [
+                        "H1",
+                        "H2",
+                        "L1",
+                        "L2",
+                        "L3",
+                        "R1",
+                        "R2",
+                        "R3"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "observed_id": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "right": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "type": "string",
+                "enum": [
+                  "SEEN",
+                  "MISSING",
+                  "UNKNOWN"
+                ]
+              },
+              "observed_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "H1",
+                      "H2",
+                      "L1",
+                      "L2",
+                      "L3",
+                      "R1",
+                      "R2",
+                      "R3"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "confidence": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "observation",
+              "observed_id",
+              "confidence"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "observation": {
+                      "const": "SEEN"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "observed_id": {
+                      "type": "string",
+                      "enum": [
+                        "H1",
+                        "H2",
+                        "L1",
+                        "L2",
+                        "L3",
+                        "R1",
+                        "R2",
+                        "R3"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "observed_id": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "inspection_id",
+          "cycle_id",
+          "frame_id",
+          "captured_at",
+          "image_ref",
+          "model_version",
+          "calibration_id",
+          "qr_read",
+          "head",
+          "left",
+          "right"
+        ],
+        "examples": [
+          {
+            "inspection_id": "e615e433-ade0-4230-9502-644bf5adf080",
+            "cycle_id": "72dd2d56-7363-4ca7-a48e-182c6f004ad9",
+            "frame_id": "CAM3-0018",
+            "captured_at": "2026-11-21T04:10:15Z",
+            "image_ref": "inspection-image-0018",
+            "model_version": "demo-model",
+            "calibration_id": "demo-cal",
+            "qr_read": "PALLET-04",
+            "head": {
+              "observation": "SEEN",
+              "observed_id": "H1",
+              "confidence": 0.96
+            },
+            "left": {
+              "observation": "MISSING",
+              "observed_id": null,
+              "confidence": null
+            },
+            "right": {
+              "observation": "SEEN",
+              "observed_id": "R1",
+              "confidence": 0.96
+            }
+          }
+        ]
+      }
+    }
+  }
+}
