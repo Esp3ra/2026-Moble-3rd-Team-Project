@@ -145,7 +145,6 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/v1/orders/'+order['order_id'],headers=self.auth).json['factory_status'],'COMPLETED')
         with closing(connect(self.path)) as db:self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='DISPENSE'").fetchone()[0],1)
 
-    @unittest.skip("Darkroom inspection stage bypassed")
     def test_missing_part_has_priority_over_qr_mismatch(self):
         def alter(data):
             data['left']=dict(observation='MISSING',observed_id=None,confidence=None)
@@ -217,7 +216,6 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='MOVE_TO_ASSEMBLY'").fetchone()[0],0)
             self.assertEqual(db.execute("SELECT last_seq FROM V1_DEVICES WHERE device_id='LINE'").fetchone()[0],2)
 
-    @unittest.skip("Darkroom inspection stage bypassed")
     def test_inspection_image_atomic_storage_and_delete_permissions(self):
         order,_=self.order();self.accept(order);self.start()
         for _ in range(50):
@@ -236,7 +234,6 @@ class FactoryTests(unittest.TestCase):
         for _ in range(2):self.assertEqual(self.client.post(url,json=data,headers=self.super_auth).status_code,200)
         self.assertEqual(self.client.get('/api/v1/inspections/'+inspection['inspection_id']+'/image',headers=self.auth).status_code,404)
 
-    @unittest.skip("Darkroom inspection stage bypassed")
     def test_no_frame_goes_to_error_two_without_fake_image(self):
         order,_=self.order();self.accept(order);self.start()
         with patch.object(self.engine.vision,'inspect_product',return_value=None):self.tick(80)

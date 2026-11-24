@@ -8,8 +8,7 @@ TRANSITIONS={
  'MOVE_TO_ASSEMBLY':('TO_ASSEMBLY','ASSEMBLING',None,None),
  'ASSEMBLE':('ASSEMBLING','TO_PICKUP','LINE','MOVE_TO_PICKUP'),
  'MOVE_TO_PICKUP':('TO_PICKUP','PICKING_UP','AGV','PICK_UP'),
- 'PICK_UP':('PICKING_UP','DELIVERING','AGV','DELIVER'),
- 'GO_TO_INSPECTION':('TO_INSPECTION','INSPECTING',None,None),
+ 'PICK_UP':('PICKING_UP','INSPECTING',None,None),
  'DELIVER':('DELIVERING','UNLOADING','AGV','UNLOAD'),
  'UNLOAD':('UNLOADING','RETURNING','AGV','RETURN_STANDBY'),
  'RETURN_STANDBY':('RETURNING','CLOSED',None,None)}
@@ -246,7 +245,7 @@ class Engine:
                 self.stage(db,cycle,'TO_PICKUP')
                 self.queue(db,'LINE',cycle['cycle_id'],'MOVE_TO_PICKUP')
             else:self.job(db,cycle,'LOCATE')
-        elif action=='GO_TO_INSPECTION':
+        elif action=='PICK_UP':
             inspection_id=cycle['inspection_id'] or uid()
             db.execute('UPDATE V1_CYCLES SET inspection_id=? WHERE cycle_id=?',(inspection_id,cycle['cycle_id']))
             if self.transport_test:
@@ -270,16 +269,10 @@ class Engine:
             db.execute("UPDATE V1_PLANT SET state='READY',stage='READY',cycle_id=NULL,updated_at=? WHERE id=1",(now(),))
         elif next_action:
             params={}
-            if next_action=='DELIVER':
-                order=find_order(db,cycle['order_id'])
-                destination=order['target_station']
-                inspection_id=cycle['inspection_id'] or cycle['cycle_id']
-                db.execute("UPDATE V1_ORDERS SET dispatch_station=?,outcome='OPEN',progress='SHIPPING',updated_at=? WHERE order_id=?",(destination,now(),cycle['order_id']))
-                params=dict(destination=destination,inspection_id=inspection_id)
-            elif next_action=='UNLOAD':
+            if next_action=='UNLOAD':
                 order=find_order(db,cycle['order_id'])
                 destination=order['dispatch_station'] or order['target_station']
-                inspection_id=cycle['inspection_id'] or cycle['cycle_id']
+                inspection_id=cycle['inspection_id']
                 params=dict(destination=destination,inspection_id=inspection_id)
             self.queue(db,device,cycle['cycle_id'],next_action,params)
         return True
