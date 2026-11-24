@@ -1,9 +1,11 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RobotFactory.Admin", "RobotFactory.Admin\RobotFactory.Admin.csproj", "{3D7FE979-50AE-4B88-8650-88465C45F75B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RobotFactory.Tests", "RobotFactory.Tests\RobotFactory.Tests.csproj", "{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -27,6 +29,18 @@ Global
 		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x64.Build.0 = Release|Any CPU
 		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x86.ActiveCfg = Release|Any CPU
 		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x86.Build.0 = Release|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Debug|x64.Build.0 = Debug|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Debug|x86.Build.0 = Debug|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Release|x64.ActiveCfg = Release|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Release|x64.Build.0 = Release|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Release|x86.ActiveCfg = Release|Any CPU
+		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -23,13 +23,15 @@ public sealed record UserAccount(
 /// </summary>
 public sealed class RolePermissions
 {
-    public string Role { get; }
-    public bool IsSuperAdmin => Role == RoleConstants.SuperAdmin;
-    public bool IsAdminOrAbove => Role == RoleConstants.Admin || Role == RoleConstants.SuperAdmin;
+    public string? Role { get; }
+    public bool IsAuthenticated => !string.IsNullOrEmpty(Role) && (Role == RoleConstants.Admin || Role == RoleConstants.SuperAdmin);
+    public bool IsSuperAdmin => IsAuthenticated && Role == RoleConstants.SuperAdmin;
+    public bool IsAdminOrAbove => IsAuthenticated && (Role == RoleConstants.Admin || Role == RoleConstants.SuperAdmin);
 
-    public RolePermissions(string role)
+    public RolePermissions(string? role)
     {
-        Role = role ?? RoleConstants.Admin;
+        // 유효한 역할만 허용하며, null/빈 문자열/알 수 없는 역할은 비인증(None)으로 격리
+        Role = role is RoleConstants.Admin or RoleConstants.SuperAdmin ? role : null;
     }
 
     // ── [1차 관리자(ADMIN) & 최상위 관리자(SUPER_ADMIN) 공통 권한] ────────
@@ -50,7 +52,9 @@ public sealed class RolePermissions
     public bool CanChangeSettings => IsSuperAdmin;       // 설비 설정 프로필 변경 (GET/PUT /settings)
     public bool CanDeleteArchive => IsSuperAdmin;        // 보관자료 영구 삭제 (POST /archive/delete)
 
-    public string RoleDisplayTitle => IsSuperAdmin ? "최상위 관리자 (SUPER_ADMIN)" : "1차 관리자 (ADMIN)";
+    public string RoleDisplayTitle => !IsAuthenticated
+        ? "인증 대기 (로그인 필요)"
+        : (IsSuperAdmin ? "최상위 관리자 (SUPER_ADMIN)" : "1차 관리자 (ADMIN)");
 }
 
 // ── 화면 전용 샘플 모델 ──────────────────────────────────────────────
@@ -61,7 +65,7 @@ public sealed record PartPreview(string Part, string Expected, string Observed);
 
 public sealed class DashboardViewModel : INotifyPropertyChanged
 {
-    private RolePermissions permissions = new(RoleConstants.SuperAdmin); // 기본: 최상위 권한 (토글 가능)
+    private RolePermissions permissions = new(null); // 기본: 비인증 상태 (로그인 전에는 모든 버튼 비활성화)
 
     public RolePermissions Permissions
     {
@@ -88,8 +92,8 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     public string ScannedQr => "수신 없음";
     public string QrMatchState => "확인 대기";
 
-    // 권한 전환 테스트용 메서드
-    public void SetRole(string role)
+    // 권한 전환 테스트 및 세션 연동용 메서드
+    public void SetRole(string? role)
     {
         Permissions = new RolePermissions(role);
     }
