@@ -5,7 +5,7 @@ AGV 인계 / 2026-11-24: 사용자 지시에 따라 암실 정차를 제거한 �
 운전: 2번 지게85° 대기 -> 1번 전진 -> 110° 인수 -> 2번 후진
       -> 전진하여 8번 좌회전 -> 9번까지 정차 없이 진행
       -> 서버가 지정한 3~7번 -> 60° 하역 -> 2번 후진 -> 85° 대기.
-목적지: 3 서울 / 4 평택 / 5 수원 / 6 오류1 / 7 오류2.
+목적지: 3 서울 / 4 대전 / 5 천안 / 6 오류1 / 7 오류2.
 8~9 사이의 기존 검사 가로 테이프는 실물에서도 제거해야 합니다.
 후진 복귀는 검사 가로선 건너뛰기 없이 실제 8번 교차로를 인식합니다.
 
@@ -123,9 +123,9 @@ constexpr uint8_t STABLE_READS = 2;
 //                 │
 //                 │      코너 ── 3 (서울)
 //                 │        │
-//                 9 ───── 10 ─── 4 (평택)
+//                 9 ───── 10 ─── 4 (대전)
 //                 │        │
-//       코너 ─── 11 ─ 코너  코너 ── 5 (수원)
+//       코너 ─── 11 ─ 코너  코너 ── 5 (천안)
 //         │             │
 //         7 (오류2)     6 (오류1)
 enum Node : int8_t {
@@ -140,8 +140,8 @@ constexpr Node NEIGHBORS[NODE_COUNT][4] = {
   {NO_NODE,     JUNCTION_8,  NO_NODE,      NO_NODE},      // 1 인수
   {NO_NODE,     NO_NODE,     NO_NODE,      JUNCTION_8},   // 2 대기·복귀
   {NO_NODE,     NO_NODE,     NO_NODE,      BEND_3},       // 3 서울 HUB
-  {NO_NODE,     NO_NODE,     NO_NODE,      JUNCTION_10},  // 4 평택 HUB
-  {NO_NODE,     NO_NODE,     NO_NODE,      BEND_5},       // 5 수원 HUB
+  {NO_NODE,     NO_NODE,     NO_NODE,      JUNCTION_10},  // 4 대전 HUB
+  {NO_NODE,     NO_NODE,     NO_NODE,      BEND_5},       // 5 천안 HUB
   {BEND_6,      NO_NODE,     NO_NODE,      NO_NODE},      // 6 오류1
   {BEND_7,      NO_NODE,     NO_NODE,      NO_NODE},      // 7 오류2
   {NO_NODE,     POINT_2,     JUNCTION_9,   POINT_1},      // 8 상단 T자
@@ -149,7 +149,7 @@ constexpr Node NEIGHBORS[NODE_COUNT][4] = {
   {BEND_3,      POINT_4,     BEND_5,       JUNCTION_9},   // 10 배송 사거리
   {JUNCTION_9,  BEND_6,      NO_NODE,      BEND_7},       // 11 오류 T자
   {NO_NODE,     POINT_3,     JUNCTION_10,  NO_NODE},      // 서울 코너
-  {JUNCTION_10, POINT_5,     NO_NODE,      NO_NODE},      // 수원 코너
+  {JUNCTION_10, POINT_5,     NO_NODE,      NO_NODE},      // 천안 코너
   {NO_NODE,     NO_NODE,     POINT_6,      JUNCTION_11},  // 오류1 코너
   {NO_NODE,     JUNCTION_11, POINT_7,      NO_NODE},      // 오류2 코너
 };
@@ -400,8 +400,8 @@ const char CONTROL_PAGE[] = R"HTML(
       <option value="1">1번 인수</option>
       <option value="2">2번 대기·복귀</option>
       <option value="3">3번 서울 HUB</option>
-      <option value="4">4번 평택 HUB</option>
-      <option value="5">5번 수원 HUB</option>
+      <option value="4">4번 대전 HUB</option>
+      <option value="5">5번 천안 HUB</option>
       <option value="6">6번 오류1</option>
       <option value="7">7번 오류2</option>
     </select>
@@ -415,8 +415,8 @@ const char CONTROL_PAGE[] = R"HTML(
   <h2>배송지</h2>
   <div class="track delivery" aria-label="배송지 선택">
     <button data-point="3" type="button" disabled>3번<br>서울 HUB</button>
-    <button data-point="4" type="button" disabled>4번<br>평택 HUB</button>
-    <button data-point="5" type="button" disabled>5번<br>수원 HUB</button>
+    <button data-point="4" type="button" disabled>4번<br>대전 HUB</button>
+    <button data-point="5" type="button" disabled>5번<br>천안 HUB</button>
   </div>
   <h2>오류 분류</h2>
   <div class="track" aria-label="오류 분류 구역 선택">
@@ -478,7 +478,7 @@ const char CONTROL_PAGE[] = R"HTML(
   const autoMode = document.querySelector('#auto-mode');
   autoMode.onclick = () => command('/mode?value=auto');
 
-  const cornerNames = ['서울 코너', '수원 코너', '오류1 코너', '오류2 코너'];
+  const cornerNames = ['서울 코너', '천안 코너', '오류1 코너', '오류2 코너'];
   function nodeName(number) {
     return pointNames.get(number) || cornerNames[number - 12] || `${number}번`;
   }
