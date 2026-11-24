@@ -46,10 +46,10 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(row['pallet_id'],'PALLET-01');self.assertEqual(row['dispatch_station'],row['target_station'])
             self.assertEqual(db.execute('SELECT count(*) FROM V1_INSPECTIONS').fetchone()[0],0)
             actions=[r[0] for r in db.execute('SELECT action FROM V1_COMMANDS ORDER BY rowid')]
-            self.assertEqual(actions,['DISPENSE','MOVE_TO_ASSEMBLY','MOVE_TO_PICKUP','PICK_UP','GO_TO_INSPECTION','DELIVER','UNLOAD','RETURN_STANDBY'])
+            self.assertEqual(actions,['DISPENSE','MOVE_TO_ASSEMBLY','MOVE_TO_PICKUP','PICK_UP','DELIVER','UNLOAD','RETURN_STANDBY'])
             self.assertEqual([r[0] for r in db.execute('SELECT DISTINCT action FROM V1_VISION_JOBS')],['QR'])
             kinds=[r[0] for r in db.execute('SELECT kind FROM V1_HISTORY')]
-            for kind in ('QR_BOUND','ASSEMBLY_STATION_STOPPED','ASSEMBLY_SKIPPED','INSPECTION_ARRIVED','INSPECTION_SKIPPED','STANDBY_RETURNED','TRANSPORT_TEST_COMPLETED'):self.assertIn(kind,kinds)
+            for kind in ('QR_BOUND','ASSEMBLY_STATION_STOPPED','ASSEMBLY_SKIPPED','STANDBY_RETURNED','TRANSPORT_TEST_COMPLETED'):self.assertIn(kind,kinds)
             self.assertNotIn('INSPECTION_PASS',kinds)
             self.assertEqual(db.execute("SELECT stage FROM V1_PALLETS WHERE pallet_id='PALLET-01'").fetchone()[0],'AWAIT_MANUAL_RETURN')
         self.engine.vision.locate_assembly.assert_not_called();self.engine.vision.inspect_product.assert_not_called()

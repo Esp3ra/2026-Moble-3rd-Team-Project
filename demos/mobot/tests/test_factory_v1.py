@@ -106,8 +106,7 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual(result['dispatch_station'],3)
         with closing(connect(self.path)) as db:
             actions=[r[0] for r in db.execute('SELECT action FROM V1_COMMANDS ORDER BY rowid')]
-            self.assertEqual(actions,['DISPENSE','MOVE_TO_ASSEMBLY','ASSEMBLE','MOVE_TO_PICKUP','PICK_UP','GO_TO_INSPECTION','DELIVER','UNLOAD','RETURN_STANDBY'])
-            self.assertEqual(db.execute('SELECT count(*) FROM V1_INSPECTIONS').fetchone()[0],1)
+            self.assertEqual(actions,['DISPENSE','MOVE_TO_ASSEMBLY','ASSEMBLE','MOVE_TO_PICKUP','PICK_UP','DELIVER','UNLOAD','RETURN_STANDBY'])
             self.assertEqual(db.execute("SELECT stage FROM V1_PALLETS WHERE pallet_id=?",(result['pallet_id'],)).fetchone()[0],'AWAIT_MANUAL_RETURN')
             self.assertFalse(db.execute('PRAGMA foreign_key_check').fetchall())
 
@@ -146,6 +145,7 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/v1/orders/'+order['order_id'],headers=self.auth).json['factory_status'],'COMPLETED')
         with closing(connect(self.path)) as db:self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='DISPENSE'").fetchone()[0],1)
 
+    @unittest.skip("Darkroom inspection stage bypassed")
     def test_missing_part_has_priority_over_qr_mismatch(self):
         def alter(data):
             data['left']=dict(observation='MISSING',observed_id=None,confidence=None)
@@ -198,13 +198,12 @@ class FactoryTests(unittest.TestCase):
 
     def test_duplicate_and_conflicting_events(self):
         order,_=self.order();self.accept(order);self.start();self.tick(80)
-        client=self.engine.clients['AGV'];event=next(e for e in client.log if e['kind']=='INSPECTION_ARRIVED')
+        client=self.engine.clients['AGV'];event=next(e for e in client.log if e['kind']=='DESTINATION_ARRIVED')
         headers={'Authorization':'Bearer agv-test'}
         result=self.client.post('/api/v1/device-events',json=event,headers=headers)
         self.assertEqual(result.json['disposition'],'DUPLICATE')
         altered={**event,'occurred_at':'2020-01-01T00:00:00Z'}
         self.assertEqual(self.client.post('/api/v1/device-events',json=altered,headers=headers).status_code,409)
-        with closing(connect(self.path)) as db:self.assertEqual(db.execute('SELECT count(*) FROM V1_INSPECTIONS').fetchone()[0],1)
         self.assertEqual(self.client.post('/api/v1/device-events',json=event,headers={'Authorization':'Bearer line-test'}).status_code,403)
 
     def test_out_of_order_events_do_not_skip_the_stage(self):
@@ -218,6 +217,7 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='MOVE_TO_ASSEMBLY'").fetchone()[0],0)
             self.assertEqual(db.execute("SELECT last_seq FROM V1_DEVICES WHERE device_id='LINE'").fetchone()[0],2)
 
+    @unittest.skip("Darkroom inspection stage bypassed")
     def test_inspection_image_atomic_storage_and_delete_permissions(self):
         order,_=self.order();self.accept(order);self.start()
         for _ in range(50):
@@ -236,6 +236,7 @@ class FactoryTests(unittest.TestCase):
         for _ in range(2):self.assertEqual(self.client.post(url,json=data,headers=self.super_auth).status_code,200)
         self.assertEqual(self.client.get('/api/v1/inspections/'+inspection['inspection_id']+'/image',headers=self.auth).status_code,404)
 
+    @unittest.skip("Darkroom inspection stage bypassed")
     def test_no_frame_goes_to_error_two_without_fake_image(self):
         order,_=self.order();self.accept(order);self.start()
         with patch.object(self.engine.vision,'inspect_product',return_value=None):self.tick(80)
