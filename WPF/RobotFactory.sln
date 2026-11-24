@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -17,18 +17,6 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|x64.Build.0 = Debug|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|x86.Build.0 = Debug|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|Any CPU.Build.0 = Release|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x64.ActiveCfg = Release|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x64.Build.0 = Release|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x86.ActiveCfg = Release|Any CPU
-		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x86.Build.0 = Release|Any CPU
 		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Debug|x64.ActiveCfg = Debug|Any CPU
@@ -41,6 +29,18 @@ Global
 		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Release|x64.Build.0 = Release|Any CPU
 		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Release|x86.ActiveCfg = Release|Any CPU
 		{6531147E-4E38-45D2-90ED-5B5AF6C1FDDF}.Release|x86.Build.0 = Release|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|x64.Build.0 = Debug|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Debug|x86.Build.0 = Debug|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x64.ActiveCfg = Release|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x64.Build.0 = Release|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x86.ActiveCfg = Release|Any CPU
+		{3D7FE979-50AE-4B88-8650-88465C45F75B}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
