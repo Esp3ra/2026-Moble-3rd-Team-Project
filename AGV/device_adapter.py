@@ -1,6 +1,8 @@
 """MOBOT v0.2.0 AGV connection module, running on the main PC.
 
-The business server owns orders, inspection decisions and the next command.
+No-darkroom profile: PICK_UP -> DELIVER -> UNLOAD -> RETURN_STANDBY.
+The business server owns destination/inspection decisions and the next command.
+The existing v0.2 wire DTO is retained, but its old GO_TO_INSPECTION stage is rejected.
 This module owns one AGV, a durable command journal and an event outbox.
 It never selects a destination or retries an ambiguous physical operation.
 Run --help for configuration. Importing this module does not contact a device.
@@ -52,7 +54,7 @@ class Problem(Exception):
 
 
 FAULTS = {"unknown", "stopped", "wifi_lost", "line_lost", "timeout", "control_lost"}
-NEXT = {"GO_TO_INSPECTION": "PICK_UP", "DELIVER": "GO_TO_INSPECTION",
+NEXT = {"DELIVER": "PICK_UP",
         "UNLOAD": "DELIVER", "RETURN_STANDBY": "UNLOAD"}
 
 
@@ -249,7 +251,9 @@ class Adapter:
                 result = self.command(body["command_id"])
                 return (202 if result["state"] in {"ACCEPTED", "RUNNING"} else 200), result
             action = body["action"]
-            if action not in {"PICK_UP", "GO_TO_INSPECTION", "DELIVER", "UNLOAD", "RETURN_STANDBY", "PAUSE", "RESUME"}:
+            if self.lane["cycle_id"] and self.raw and self.raw["state"] in FAULTS | {"inspecting"} and not self.lane["recovery"]:
+                self._fault("Cancelled or legacy inspection state requires operator reconciliation")
+            if action not in {"PICK_UP", "DELIVER", "UNLOAD", "RETURN_STANDBY", "PAUSE", "RESUME"}:
                 raise Problem(422, "BAD_TRANSITION", "Unsupported AGV action")
             if not self.online:
                 raise Problem(503, "DEVICE_UNAVAILABLE", "No current device status", "QUERY_FIRST")
@@ -309,14 +313,10 @@ class Adapter:
         action, params = body["action"], body["params"]
         if action == "PICK_UP":
             return [["move", 1], ["fork", 110]]
-        if action == "GO_TO_INSPECTION":
-            if not self._at(1) or not self._fork(110):
-                raise Problem(409, "BAD_TRANSITION", "Inspection trip requires the completed pickup")
-            return [["move", 2], ["inspection", None]]
         if action == "DELIVER":
-            if self.raw["state"] != "inspecting" or not self._fork(110):
-                raise Problem(409, "BAD_TRANSITION", "Delivery starts from the inspection stop")
-            return [["move", params["destination"]]]
+            if not self._at(1) or not self._fork(110):
+                raise Problem(409, "BAD_TRANSITION", "Delivery requires completed pickup at point 1")
+            return [["move", 2], ["move", params["destination"]]]
         if action == "UNLOAD":
             if not self._at(params["destination"]) or not self._fork(110):
                 raise Problem(409, "BAD_TRANSITION", "Unload requires arrival at the recorded destination")
@@ -339,8 +339,6 @@ class Adapter:
         action = body["action"]
         if action == "PICK_UP":
             kind, data = "LIFT_FINISHED", {"station": 1, "fork_target_deg": 110, "fork_moving": False}
-        elif action == "GO_TO_INSPECTION":
-            kind, data = "INSPECTION_ARRIVED", {"state": "inspecting"}
         elif action == "DELIVER":
             kind, data = "DESTINATION_ARRIVED", {"destination": body["params"]["destination"]}
         elif action == "UNLOAD":
@@ -391,7 +389,6 @@ class Adapter:
             op_id = plan["operation_id"]
             if operation == "move": self.client.move(value, op_id)
             elif operation == "fork": self.client.set_fork(value, op_id)
-            elif operation == "inspection": self.client.inspect(op_id)
             elif operation == "pause": self.client.pause(op_id)
             else: self.client.resume(op_id)
             return
@@ -404,7 +401,6 @@ class Adapter:
         plan["seen"] = True
         matches = ((operation == "move" and self._at(value) and not self.raw["fork_moving"]) or
                    (operation == "fork" and self._fork(value)) or
-                   (operation == "inspection" and self.raw["state"] == "inspecting" and self._fork(110)) or
                    (operation == "pause" and self.raw["state"] == "paused" and not self.raw["fork_moving"]) or
                    (operation == "resume" and self.raw["state"] != "paused"))
         if matches:
@@ -448,9 +444,9 @@ class Adapter:
                     self.client.stop()
                     return
                 pending = self._pending()
-                if pending and (raw["state"] in FAULTS or raw["servo_angle"] < 0 or
+                if (pending or self.lane["cycle_id"]) and not self.lane["recovery"] and (raw["state"] in FAULTS or raw["state"] == "inspecting" or raw["servo_angle"] < 0 or
                                 raw["mode"] != "auto" or not raw["control_connected"]):
-                    self._fault("Device lost control, position or fork output during an active command")
+                    self._fault(f"Device state={raw['state']}: control, position or fork output requires reconciliation")
                     return
                 controls = [c for c in pending if c[0]["action"] in {"PAUSE", "RESUME"}]
                 if controls:

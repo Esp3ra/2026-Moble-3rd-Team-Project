@@ -29,6 +29,7 @@ void fixture() {
     location = POINT_2;
     destination = NO_NODE;
     inspectionTrip = false;
+    lineMissing = false;
     serverReady = true;
     WiFi.connected = true;
     frontMask = F_CENTER;
@@ -101,14 +102,6 @@ void backward(std::initializer_list<Mark> marks) {
         assert(route[nextIndex] == mark.node && phase == Phase::Follow);
         tick(4);
         tick(4);
-        if (mark.node == JUNCTION_8 && isDispatchPoint(route[0])) {
-            tick(7);
-            tick(7);
-            assert(phase == Phase::Follow && returnInspectionBarSeen);
-            tick(4);
-            tick(4);
-            assert(phase == Phase::Follow && returnInspectionBarPassed);
-        }
         tick(mark.mask);
         if (mark.turn >= 0) tick(mark.mask);
         if (mark.turn < 0) {
@@ -267,43 +260,10 @@ void inspectionAndRouteTests() {
         fixture();
         auto inspect = request();
         inspectionRequest(&inspect);
-        assert(inspect.status == "202 Accepted");
-        ms += CONTROL_INTERVAL_MS;
-        loop();
-        assert(inspectionTrip && state == State::Moving);
-        tick(F_CENTER);
-        tick(F_CENTER);
-        tick(F_LEFT);
-        tick(F_LEFT);
-        tick(F_CENTER,CENTER_MS);
-        assert(phase == Phase::Turn && route[nextIndex] == JUNCTION_8);
-        tick(F_BOTH,TURN_MIN_MS);
-        assert(state == State::Moving && phase == Phase::Turn);
-        tick(0);
-        tick(F_CENTER);
-        tick(F_CENTER);
-        assert(phase == Phase::ExitTurn);
-        tick(F_BOTH);
-        assert(state == State::Moving);  // Turn-8 residue is ignored.
-        tick(F_CENTER);
-        tick(F_CENTER);
-        assert(inspectionArmed);
-        tick(F_BOTH);
-        assert(state == State::Inspecting && motorLeft == 0 && motorRight == 0);
-        assert(route[nextIndex] == JUNCTION_8);  // Also works during the old 2s gate.
-        auto status = request();
-        showStatus(&status);
-        assert(status.body.find("\"state\":\"inspecting\"") != std::string::npos);
-        auto go = request();
-        go.user_ctx = &goRequest;
-        go.query = "point=" + std::to_string(item.target + 1);
-        handleCommand(&go);
-        assert(go.status == "202 Accepted");
-        frontMask = F_BOTH;
-        ms += CONTROL_INTERVAL_MS;
-        loop();
-        assert(state == State::Moving && !inspectionTrip && route[nextIndex] == JUNCTION_9);
-        assert(phase == Phase::Follow);  // Departure bar cannot become junction 9.
+        assert(inspect.status == "410 Gone" && pendingCommand == 0);
+        place(POINT_2,item.target);
+        forward({out8});
+        assert(state == State::Moving && route[nextIndex] == JUNCTION_9);
         forward(item.out);
         place(item.target, POINT_2);
         backward(item.back);
@@ -314,7 +274,7 @@ void inspectionAndRouteTests() {
     fixture();
     place(POINT_2,POINT_1);
     forward({{JUNCTION_8,F_LEFT,0},{POINT_1,F_BOTH,-1}});
-    puts("Five inspection-to-destination routes, inspection-bar gating, five returns past the extra bar, and 1/2 transfer passed.");
+    puts("Five direct destination routes through 8/9, five returns without an inspection bar, and 1/2 transfer passed.");
 }
 
 void sessionEdgeTests() {
@@ -448,10 +408,56 @@ void pauseAndOperationTests() {
     puts("Pause/resume preserves turn/servo/timers; expiry cancels pause; applied operation and boot evidence passed.");
 }
 
+void lineLossAndCancelTests() {
+    // Healthy heartbeat throughout: firmware must not rely on the server timeout.
+    for (int direction = 0; direction < 2; ++direction) {
+        fixture();
+        place(direction ? POINT_1 : POINT_2, direction ? POINT_2 : POINT_3);
+        if (!direction) { lastLineSide = 1; readyForFeature = true; }
+        tick(0);
+        tick(0, LINE_LOST_MS - 1);
+        assert(state == State::Moving);
+        tick(0, 1);
+        assert(state == State::LineLost && motorLeft == 0 && motorRight == 0);
+        assert(sessionConnected(ms));
+        assert(location == NO_NODE && destination == NO_NODE);
+    }
+    // Reacquisition restarts the continuous absence interval.
+    fixture();place(POINT_1,POINT_2);
+    tick(0);tick(0,9000);tick(4);tick(0);tick(0,9999);
+    assert(state == State::Moving);tick(0,1);assert(state == State::LineLost);
+    // Phase transitions and normal pauses must not accidentally reset/consume it.
+    fixture();place(POINT_1,POINT_2);tick(0);tick(0,4000);
+    pauseTrip(ms);healthyTime(20000);resumeTrip(ms);
+    tick(0,5999);assert(state == State::Moving);tick(0,1);assert(state == State::LineLost);
+    fixture();place(POINT_2,POINT_3);startTurn(ms,false,TURN_SPEED);
+    tick(0);tick(0,9999);assert(state == State::Moving);tick(0,1);
+    assert(state == State::LineLost && motorLeft == 0 && motorRight == 0);
+    // Exercise the real loop using GPIO-backed rear samples and a valid heartbeat.
+    fixture();place(POINT_1,POINT_2);
+    gpioLevels[REAR_LEFT_PIN] = gpioLevels[REAR_CENTER_PIN] = gpioLevels[REAR_RIGHT_PIN] = !REAR_BLACK_LEVEL;
+    healthyTime(REVERSE_CONTROL_INTERVAL_MS);loop();
+    healthyTime(9999 - (ms - lineMissingAt));loop();assert(state == State::Moving);
+    healthyTime(1);loop(); // A control tick is needed to apply the elapsed deadline.
+    healthyTime(REVERSE_CONTROL_INTERVAL_MS);loop();
+    assert(state == State::LineLost && motorLeft == 0 && motorRight == 0);
+    fixture();startReverseTest();
+    updateReverseTest();healthyTime(10000);updateReverseTest();
+    assert(state == State::LineLost && motorLeft == 0 && motorRight == 0);
+    // Historical inspection waits cannot survive stop or accept a departure.
+    fixture();location=NO_NODE;publish(State::Inspecting);
+    auto stop=request();stop.user_ctx=&stopRequest;handleCommand(&stop);loop();
+    assert(state == State::Stopped && motorLeft == 0 && motorRight == 0);
+    auto go=request();go.user_ctx=&goRequest;go.query="point=3";
+    handleCommand(&go);assert(go.status == "409 Conflict");
+    puts("10-second forward/reverse/turn loss, reacquisition, pause timer, and legacy inspection cancellation passed.");
+}
+
 int main() {
     controlAndTimeoutTests();
     websocketTests();
     inspectionAndRouteTests();
+    lineLossAndCancelTests();
     sessionEdgeTests();
     pauseAndOperationTests();
     puts("All tests use fake GPIO, motor UART, servo PWM, HTTP requests, sockets, and time. No physical device was driven.");

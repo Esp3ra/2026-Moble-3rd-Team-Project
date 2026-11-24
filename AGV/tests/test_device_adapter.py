@@ -95,11 +95,11 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaises(Problem) as context: callback()
         self.assertEqual(context.exception.status, status)
 
-    def test_five_full_darkroom_routes_and_contract_events(self):
+    def test_five_full_direct_routes_and_contract_events(self):
         for destination in range(3, 8):
             self.cycle = identifier()
             inspection = identifier()
-            for action, params in [("PICK_UP", {}), ("GO_TO_INSPECTION", {}),
+            for action, params in [("PICK_UP", {}),
                 ("DELIVER", {"destination": destination, "inspection_id": inspection}),
                 ("UNLOAD", {"destination": destination, "inspection_id": inspection}), ("RETURN_STANDBY", {})]:
                 result = self.complete(self.body(action, params))
@@ -109,11 +109,11 @@ class AdapterTests(unittest.TestCase):
             self.assertIsNone(self.adapter.status()["cycle_id"])
             self.assertEqual((self.device.raw["position"], self.device.raw["servo_angle"]), (2, 85))
         events = self.adapter.events(self.adapter.boot_id)["events"]
-        self.assertEqual(len(events), 25)
+        self.assertEqual(len(events), 20)
         for event in events: validate("DeviceEvent", event)
-        self.assertEqual([e["event_seq"] for e in events], list(range(1, 26)))
-        self.assertEqual(sum(e["kind"] == "INSPECTION_ARRIVED" for e in events), 5)
-        self.assertEqual(sum(c[0] == "inspection" for c in self.device.calls), 5)
+        self.assertEqual([e["event_seq"] for e in events], list(range(1, 21)))
+        self.assertEqual(sum(e["kind"] == "INSPECTION_ARRIVED" for e in events), 0)
+        self.assertEqual(sum(c[0] == "inspection" for c in self.device.calls), 0)
 
     def test_duplicate_conflicting_and_stale_commands(self):
         body = self.body("PICK_UP")
@@ -133,10 +133,10 @@ class AdapterTests(unittest.TestCase):
         before = len(self.device.calls)
         self.assertEqual(self.accept(body), (200, result))
         self.assertEqual(len(self.device.calls), before)
-        self.assert_problem(409, lambda: self.accept(self.body("GO_TO_INSPECTION", cycle=identifier())))
+        self.assert_problem(409, lambda: self.accept(self.body("DELIVER", {"destination":3,"inspection_id":identifier()}, cycle=identifier())))
 
     def test_unload_and_return_do_not_complete_early(self):
-        self.complete(self.body("PICK_UP")); self.complete(self.body("GO_TO_INSPECTION"))
+        self.complete(self.body("PICK_UP"))
         info = {"destination": 6, "inspection_id": identifier()}
         self.complete(self.body("DELIVER", info))
         wrong = dict(info, inspection_id=identifier())
@@ -240,7 +240,8 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(sum(c[0] == "move" for c in self.device.calls), 1)
 
     def test_event_replay_cursor_and_outbox_ack_loss(self):
-        self.complete(self.body("PICK_UP")); self.complete(self.body("GO_TO_INSPECTION"))
+        self.complete(self.body("PICK_UP"))
+        self.complete(self.body("DELIVER", {"destination": 3, "inspection_id": identifier()}))
         page = self.adapter.events(self.adapter.boot_id, limit=1)
         second = self.adapter.events(self.adapter.boot_id, limit=1, cursor=page["next_cursor"])
         self.assertNotEqual(page["events"][0]["event_id"], second["events"][0]["event_id"])
@@ -307,7 +308,7 @@ class AdapterTests(unittest.TestCase):
         with patch("device_adapter.urlopen", return_value=Response()):
             self.adapter.deliver_once("http://127.0.0.1/events", "event-token")
         self.assertEqual(self.adapter.status()["state"], "FAULT")
-        self.assert_problem(409, lambda: self.accept(self.body("GO_TO_INSPECTION")))
+        self.assert_problem(409, lambda: self.accept(self.body("DELIVER", {"destination":3,"inspection_id":identifier()})))
 
     def test_device_key_and_input_constraints(self):
         wrong = self.body("PICK_UP"); wrong["device_id"] = "ARM"
@@ -338,7 +339,7 @@ class AdapterTests(unittest.TestCase):
         for _ in range(2):
             self.cycle = identifier(); old_cycles.append(self.cycle)
             info = {"destination": 3, "inspection_id": identifier()}
-            for action, params in [("PICK_UP", {}), ("GO_TO_INSPECTION", {}),
+            for action, params in [("PICK_UP", {}),
                                    ("DELIVER", info), ("UNLOAD", info), ("RETURN_STANDBY", {})]:
                 self.complete(self.body(action, params))
         self.adapter.close()
@@ -460,6 +461,30 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(call("/device/v1/commands/invalid")[0], 400)
         finally:
             server.shutdown(); server.server_close(); worker.join()
+
+
+    def test_cancelled_idle_or_legacy_inspection_blocks_delivery(self):
+        for raw_state in ("stopped", "line_lost", "inspecting"):
+            with self.subTest(raw_state=raw_state):
+                self.complete(self.body("PICK_UP"))
+                self.device.raw.update(state=raw_state, position=0)
+                self.adapter.step()
+                self.assertTrue(self.adapter.lane["recovery"])
+                before = len(self.device.calls)
+                self.assert_problem(409, lambda: self.accept(self.body("DELIVER", {"destination":3,"inspection_id":identifier()})))
+                self.assertEqual(len(self.device.calls), before)
+                self.adapter.close()
+                self.path = str(Path(self.tmp.name) / (identifier()+".sqlite"))
+                self.device = Device()
+                self.adapter = Adapter(self.device, self.path, 30, clock=lambda:self.now)
+                self.adapter.step();self.cycle=identifier()
+
+    def test_darkroom_action_rejected_without_motion_or_fake_event(self):
+        self.complete(self.body("PICK_UP"))
+        before = len(self.device.calls)
+        self.assert_problem(422, lambda:self.accept(self.body("GO_TO_INSPECTION")))
+        self.assertEqual(len(self.device.calls), before)
+        self.assertFalse(any(e["kind"]=="INSPECTION_ARRIVED" for e in self.adapter.events(self.adapter.boot_id)["events"]))
 
 
 if __name__ == "__main__": unittest.main()

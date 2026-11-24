@@ -1,116 +1,37 @@
 /*
-팀원 공유용 AGV 서버 연동 기준
-기준은 main/docs의 HARDWARE_WORKFLOW.md와 통신 규약 v0.2.0입니다.
-AGV/device_adapter.py가 메인 PC에서 /device/v1 계약과 완료 이벤트를 제공하고,
-이 스케치는 기존 HTTP 경로를 통해 실제 주행·지게를 수행합니다.
-정상 PAUSE/RESUME는 단계·타이머를 보존하고, /stop·통신 장애는 취소합니다.
-X-AGV-Operation은 연결 모듈의 하위 동작 ID이며 /status에서 적용 여부를 확인합니다.
-ESP32 boot_id가 달라지면 이전 동작의 완료를 추정하거나 자동 재실행하지 않습니다.
+AGV 인계 / 2026-11-24: 사용자 지시에 따라 암실 정차를 제거한 운전 프로필.
+기존 main v0.2.0의 암실 공정과 다르므로 서버 단계 전환도 함께 적용해야 합니다.
 
-장치와 각도
-  1번은 컨베이어 끝 인수 위치, 2번은 대기 및 복귀 위치입니다.
-  3번 서울 HUB, 4번 평택 HUB, 5번 수원 HUB, 6번 오류1, 7번 오류2입니다.
-  지게 GPIO23은 인수 준비·대기 85도, 운반 110도, 목적지 하역 60도입니다.
-  후진 진행 방향 기준 왼쪽 GPIO35, 가운데 GPIO34, 오른쪽 GPIO36입니다.
-  암실 정차선은 8번과 9번 사이에 놓는 검은 가로 테이프입니다.
-  전방 센서 6개가 모두 검은색을 읽으면 암실에서 정지합니다.
+운전: 2번 지게85° 대기 -> 1번 전진 -> 110° 인수 -> 2번 후진
+      -> 전진하여 8번 좌회전 -> 9번까지 정차 없이 진행
+      -> 서버가 지정한 3~7번 -> 60° 하역 -> 2번 후진 -> 85° 대기.
+목적지: 3 서울 / 4 평택 / 5 수원 / 6 오류1 / 7 오류2.
+8~9 사이의 기존 검사 가로 테이프는 실물에서도 제거해야 합니다.
+후진 복귀는 검사 가로선 건너뛰기 없이 실제 8번 교차로를 인식합니다.
 
-장치 제어키 설정
-  agv_secrets.example.h를 같은 폴더의 agv_secrets.h로 복사합니다.
-  AGV_DEVICE_KEY에 비공개 무작위 제어키를 설정합니다.
-  32~96자의 영문·숫자·하이픈·밑줄을 사용할 수 있습니다.
-  Python의 secrets.token_hex(32)로 생성한 64자 키를 권장합니다.
-  실제 키는 중앙 서버와 승인된 운영자에게 비공개로 전달합니다.
-  agv_secrets.h는 Git에 포함하지 않습니다. 빈 키로는 장비를 제어할 수 없습니다.
-  현재 HTTP 및 WebSocket 제어는 신뢰된 장비 네트워크에서 운영합니다.
+ESP32 HTTP 직접 호출: /go?point=1 -> /servo?angle=110 -> /go?point=2
+-> /go?point=3~7 -> /servo?angle=60 -> /go?point=2 -> /servo?angle=85.
+매 단계에서 arrived/position 또는 fork_moving=false/servo_angle 완료를 확인합니다.
+/inspection은 410 Gone입니다. inspecting은 이전 버전 상태 식별용이며 새로 진입하지 않습니다.
 
-인증 및 연결 유지
-  HTTP 명령에는 Authorization 헤더를 Bearer <장치 제어키>로 설정합니다.
-  제어기마다 고유한 X-AGV-Controller 값을 사용합니다.
-  제어기 ID는 영문·숫자·하이픈·밑줄로 된 최대 48자 문자열입니다.
-  POST /control/session으로 사용 가능한 제어 세션을 먼저 확보합니다.
-  이후 같은 제어기가 POST /heartbeat를 500ms 간격으로 보냅니다.
-  2초 동안 유효한 하트비트가 없으면 모터를 멈추고 서보 이동을 중지합니다.
-  서보는 중지 시점의 출력 각도를 유지합니다. 대기 명령은 취소합니다.
-  다른 제어기의 요청과 일반 상태 조회는 하트비트를 갱신하지 않습니다.
-  연결이 복구되어도 이동을 자동 재실행하지 않습니다.
-  서버는 위치·지게 각도·작업 단계를 대조한 뒤 세션과 작업을 재개합니다.
-  이동 중 위치가 불명확해지면 실제 위치를 확인한 뒤 /position으로 설정합니다.
-  브라우저 제어 화면에도 제어키를 입력하고 제어 연결을 눌러야 합니다.
-  브라우저는 자기 제어 세션의 하트비트만 보냅니다.
-  수동 RC는 WebSocket 연결 시에도 키와 제어기 ID를 확인합니다.
-  수동 조작 유지 신호의 400ms 시간초과 정지도 함께 적용됩니다.
+메인 PC 연결 모듈: PICK_UP -> DELIVER -> UNLOAD -> RETURN_STANDBY.
+DELIVER가 1->2 후진과 2->목적지 전진을 연속 단계로 수행합니다.
+서버가 목적지와 기존 계약의 inspection_id를 제공해야 합니다. 검사를 가짜 생성하지 않습니다.
+GO_TO_INSPECTION은 지원하지 않습니다. 기존 서버 엔진은 연결 전에 수정해야 합니다.
 
-정상 배송 한 건의 서버 호출 순서
-  초기에는 AGV를 실제 2번에 두고 지게를 1번 방향으로 향하게 놓습니다.
-  제어 세션 확보 후 자동 모드 선택, 최초 위치 설정, 지게 85도를 확인합니다.
-  작업 중인 주문과 팔레트 회차는 중앙 서버에서 유지합니다.
+센서: 전진 전방6개, 후진 진행방향 기준 좌35/중앙34/우36. 지게 GPIO23.
+진행 방향의 모든 센서가 연속 10000ms 미검출이면 모터0, line_lost, 위치불명 처리.
+한 센서라도 재감지하면 연속 이탈 타이머 초기화. 일시정지 시간은 제외합니다.
+이 검사는 전진·후진·회전·후진 테스트에 적용하며 정상 보정 속도/주기는 유지합니다.
+10초는 이번 사용자 지정 펌웨어 프로필이며 팀 공통 규약에 명시된 수치는 아닙니다.
 
-  1. POST /go?point=1
-     2번에서 지게 85도를 유지하며 1번으로 전진하고 도착을 기다립니다.
-  2. POST /servo?angle=110
-     팔레트를 들어 올리고 서보 동작 완료를 기다립니다.
-  3. POST /go?point=2
-     지게 110도를 유지하며 2번까지 후진하고 도착을 기다립니다.
-     적재 후 2번 경유에서는 지게 110도를 유지합니다.
-  4. POST /inspection
-     2번에서 전진해 8번을 돈 뒤 암실 정차선에서 멈춥니다.
-     /status의 state가 inspecting이 될 때까지 기다립니다.
-     이 상태의 position은 0이며 암실 대기를 의미합니다.
-  5. 메인 PC의 카메라 3으로 QR과 완성품을 검사합니다.
-     검사 결과를 DB에 저장한 후 서버가 목적지를 결정합니다.
-     부품 누락이 확인되면 6번이 우선입니다.
-     누락이 확인되지 않은 오부품·QR 불일치·미인식·가림 판정 불가는 7번입니다.
-     정상이면 소비자가 주문한 3·4·5번 HUB를 선택합니다.
-     오류 제품도 서버 판정 후 해당 오류 구역으로 이송합니다.
-  6. POST /go?point=N
-     N은 검사 결과에 따라 정한 3~7번입니다.
-     암실에서 출발해 9번 분기부터 기존 경로로 전진하고 도착을 기다립니다.
-  7. POST /servo?angle=60
-     목적지에 하역하고 서보 동작 완료를 기다립니다.
-  8. POST /go?point=2
-     후진 복귀합니다. 암실 가로선을 먼저 통과한 뒤 실제 8번 T자를 감지합니다.
-  9. POST /servo?angle=85
-     최종 2번 정차와 지게 85도 복귀를 확인하고 이송 사이클을 종료합니다.
-     다음 대기 주문은 서버가 지정합니다.
-
-완료 확인
-  GET /status에는 Authorization 헤더가 필요합니다.
-  HTTP 202는 명령 접수이며, 이동 완료는 state=arrived 및 position=N으로 확인합니다.
-  서보 완료는 fork_moving=false 및 servo_angle=요청 각도로 확인합니다.
-  servo_angle은 출력 설정 각도이며 실제 물체 감지 값은 아닙니다.
-  암실 대기는 state=inspecting입니다. 이때 /go는 3~7번 목적지를 받습니다.
-  control_connected는 현재 제어 세션의 유효 여부입니다.
-  control_lost는 제어 연결 만료로 동작이 중지된 상태입니다.
-  stopped·wifi_lost·line_lost·timeout·control_lost는 서버가 상태를 확인해 복구합니다.
-  409 응답이면 현재 상태와 제어기 소유권을 확인합니다.
-  응답이 불명확한 이동·인수·하역 명령은 상태 조회 후 처리해 중복 실행을 막습니다.
-  servo_angle=-1은 서보 PWM 오류입니다.
-
-API
-  POST /control/session      제어 세션 확보
-  POST /heartbeat            현재 제어기의 연결 유지
-  POST /mode?value=auto       자동 모드
-  POST /mode?value=rc         수동 모드
-  POST /position?point=N     실제 위치 확인 후 위치 설정
-  POST /go?point=N           구간 이동 또는 암실에서 판정 목적지로 재출발
-  POST /inspection           2번에서 암실 검사 정차선으로 이동
-  POST /servo?angle=N        정지 중 지게 0~180도 지정
-  POST /rc/servo?angle=N     수동 모드 정지 중 지게 각도 지정
-  POST /reverse-test         후진 라인트레이싱 테스트
-  POST /stop                 인증된 운영자의 정지 명령
-  POST /pause                정상 일시정지, 경로·타이머·지게 목표 보존
-  POST /resume               같은 제어 세션에서 일시정지 해제
-  GET  /status               인증 후 상태 조회
-
-  POST 명령은 유효한 제어 세션이 필요합니다.
-  /stop은 인증된 키로 세션 소유권과 관계없이 정지를 요청할 수 있습니다.
-  /servo?position=lower의 기본 각도는 85도입니다.
-  목적지 하역은 /servo?angle=60을 사용합니다.
-
-  AGV/agv_client.py는 중앙 서버에서 사용할 표준 라이브러리 기반 클라이언트입니다.
-  연결 유지 전송은 별도 스레드에서 수행해 영상 처리 중에도 이어집니다.
-  실제 서버·WPF·DB와의 연동 및 적재 상태 실차 검증은 별도로 수행합니다.
+인증: 비공개 agv_secrets.h의 AGV_DEVICE_KEY, Bearer 및 X-AGV-Controller.
+/control/session 후 같은 제어기의 /heartbeat로 연결을 유지합니다.
+시험 기본값 heartbeat500ms/만료2초, RC 유지400ms. 통신단절은 10초 이탈과 별개로 정지합니다.
+/stop은 모든 상태의 취소. /pause와 /resume만 경로·타이머를 보존하는 정상 정지/재개입니다.
+위치불명·통신장애·취소는 현장 확인과 연결 모듈 복구 절차 전 자동 재출발하지 않습니다.
+서보값은 출력각이며 별도 적재 센서가 없으므로 실제 적재 피드백으로 오인하지 않습니다.
+실제 설정·키·DB는 커밋하지 않습니다. 컴파일/모의 시험은 실차 검증과 구분합니다.
 */
 
 
@@ -193,7 +114,7 @@ constexpr uint8_t TURN_EXIT_STABLE_READS = 3;
 constexpr unsigned long REVERSE_CENTER_MS = 180;
 constexpr unsigned long CROSS_TIMEOUT_MS = 1000;
 constexpr unsigned long DEPARTURE_TIMEOUT_MS = 1400;
-constexpr unsigned long LINE_LOST_MS = 650;
+constexpr unsigned long LINE_LOST_MS = 10000; // Active-direction sensors absent continuously for 10 seconds.
 constexpr unsigned long SEGMENT_TIMEOUT_MS = 20000;
 constexpr uint8_t STABLE_READS = 2;
 
@@ -281,10 +202,6 @@ int controllerSocket = -1;
 char controlPath[26];
 std::atomic<bool> rcMode{false};
 bool inspectionTrip = false;
-bool inspectionArmed = false;
-uint8_t inspectionClearReads = 0;
-bool returnInspectionBarSeen = false;
-bool returnInspectionBarPassed = false;
 
 
 // 상태, 현재 위치, 목적지를 한 번에 게시한다.
@@ -330,6 +247,8 @@ uint8_t nextIndex = 0;
 unsigned long segmentAt = 0;
 unsigned long phaseAt = 0;
 unsigned long lineLostAt = 0;
+bool lineMissing = false;
+unsigned long lineMissingAt = 0;
 bool recovering = false;
 int lastLineSide = 0;
 int rearLastLineSide = 0;
@@ -493,7 +412,6 @@ const char CONTROL_PAGE[] = R"HTML(
     <button data-point="1" type="button" disabled>1번 인수</button>
     <button data-point="2" type="button" disabled>2번 대기·복귀</button>
   </div>
-  <button id="inspection" type="button" disabled>암실 검사 위치로 이동</button>
   <h2>배송지</h2>
   <div class="track delivery" aria-label="배송지 선택">
     <button data-point="3" type="button" disabled>3번<br>서울 HUB</button>
@@ -538,7 +456,6 @@ const char CONTROL_PAGE[] = R"HTML(
   const pointNames = new Map(Array.from(position.options, option => [Number(option.value), option.textContent]));
   const setButton = document.querySelector('#set');
   const reverseTest = document.querySelector('#reverse-test');
-  const inspection = document.querySelector('#inspection');
   const reverseReadings = document.querySelector('#reverse-readings');
   const statusText = document.querySelector('#state');
   const driveStep = document.querySelector('#drive-step');
@@ -552,7 +469,7 @@ const char CONTROL_PAGE[] = R"HTML(
     timeout: '이동 시간 초과 · 출발 위치를 다시 설정하세요',
     reverse_testing: '후진 라인트레이싱 모드',
     control_lost: '제어 통신 끊김 · 위치와 공정 상태를 확인하세요',
-    inspecting: '암실 정차 · 검사 결과 대기'
+    inspecting: '이전 버전 검사 대기 · 복구 필요'
   };
   let waiting = false;
   let commandVersion = 0;
@@ -592,20 +509,19 @@ const char CONTROL_PAGE[] = R"HTML(
     });
     forkOutput.hidden = !servoReady;
     if (servoReady) forkOutput.textContent = '지게 출력 각도 ' + servoAngle + '°';
-    inspection.disabled = waiting || busy || latestStatus?.position !== 2;
     buttons.forEach(button => {
       const target = Number(button.dataset.point);
       const current = latestStatus?.position;
       const atInspection = latestStatus?.state === 'inspecting';
       button.disabled = waiting || busy ||
-        (atInspection ? target < 3 : !current || target === current || (current >= 3 && target !== 2));
+        (atInspection || !current || target === current || (current >= 3 && target !== 2));
     });
     statusText.textContent = latestStatus?.mode === 'rc'
       ? '수동 RC 모드 · 자동 운행을 시작하려면 위에서 모드를 전환하세요.'
       : latestStatus
       ? labels[latestStatus.state] +
         (latestStatus.position ? ' · 현재 ' + pointNames.get(latestStatus.position) : '') +
-        (moving ? ' → ' + (latestStatus.inspection_trip ? '암실 검사' : pointNames.get(latestStatus.target)) : '') +
+        (moving ? ' → ' + pointNames.get(latestStatus.target) : '') +
         (latestStatus.fork_moving ? ' · 지게 움직이는 중' : '')
       : 'AGV 연결 끊김';
     driveStep.hidden = !moving || latestStatus.mode !== 'auto' || !latestStatus.next_node;
@@ -676,7 +592,6 @@ const char CONTROL_PAGE[] = R"HTML(
   }
 
   setButton.onclick = () => command('/position?point=' + position.value);
-  inspection.onclick = () => command('/inspection');
   reverseTest.onclick = () => command('/reverse-test');
   buttons.forEach(button => button.onclick = () => command('/go?point=' + button.dataset.point));
   forkForms.forEach(form => form.onsubmit = event => {
@@ -1187,6 +1102,7 @@ void resumeTrip(unsigned long now) {
   segmentAt += elapsed;
   phaseAt += elapsed;
   lineLostAt += elapsed;
+  lineMissingAt += elapsed;
   rearCorrectionStartedAt += elapsed;
   forkStartedAt += elapsed;
   forkUpdatedAt += elapsed;
@@ -1262,33 +1178,35 @@ void startTurn(unsigned long now, bool right, int speed) {
 }
 
 void startTrip(Node target, unsigned long now) {
-  const bool fromInspection = state == State::Inspecting;
-  if (state == State::Moving || (fromInspection ? !isDispatchPoint(target) : !canTravel(location, target))) return;
-  if (!makeRoute(fromInspection ? JUNCTION_8 : location, target)) return;
+  if (state == State::Moving || state == State::Inspecting || !canTravel(location, target)) return;
+  if (!makeRoute(location, target)) return;
   inspectionTrip = false;
-  returnInspectionBarSeen = false;
-  returnInspectionBarPassed = false;
+  lineMissing = false;
 
   Serial.printf("AGV route start: %d -> %d\n", location + 1, target + 1);
   destination = target;
   nextIndex = 1;
-  reversing = !fromInspection && (location == POINT_1 || isDispatchPoint(location));
+  reversing = location == POINT_1 || isDispatchPoint(location);
   location = NO_NODE;
   startFollowing(now);
   publish(State::Moving);
 }
 
-void startInspectionTrip(unsigned long now) {
-  if (state == State::Moving || location != POINT_2 || !makeRoute(POINT_2, JUNCTION_9)) return;
-  inspectionTrip = true;
-  inspectionArmed = false;
-  inspectionClearReads = 0;
-  destination = NO_NODE;
-  location = NO_NODE;
-  nextIndex = 1;
-  reversing = false;
-  startFollowing(now);
-  publish(State::Moving);
+// No dark-room stop. A complete /go route proceeds directly through 8 -> 9.
+bool checkLinePresence(bool seen, unsigned long now) {
+  if (seen) {
+    lineMissing = false;
+    return true;
+  }
+  if (!lineMissing) {
+    lineMissing = true;
+    lineMissingAt = now;
+  }
+  if (now - lineMissingAt >= LINE_LOST_MS) {
+    stopTrip(State::LineLost);
+    return false;
+  }
+  return true;
 }
 
 void steerAlongLine(float error, int speedLimit, bool backward) {
@@ -1354,6 +1272,7 @@ void followLine(const Sample& sample, unsigned long now, int speedLimit) {
 }
 
 void startReverseTest() {
+  lineMissing = false;
   rearLastLineSide = 0;
   reverseTestReadings.store(-1);
   location = destination = NO_NODE;
@@ -1362,6 +1281,7 @@ void startReverseTest() {
 
 void updateReverseTest() {
   const uint8_t rearMask = rearLineMask();
+  if (!checkLinePresence(rearMask != 0, millis())) return;
   driveByRearLine(rearMask);
 }
 
@@ -1381,7 +1301,7 @@ void trackSegment(const Sample& sample, unsigned long now) {
   if (!readyForFeature) {
     centeredReads = sample.centeredLine() ? centeredReads + 1 : 0;
     readyForFeature = centeredReads >= STABLE_READS;
-    if (!readyForFeature && now - segmentAt >= DEPARTURE_TIMEOUT_MS) {
+    if (!readyForFeature && sample.count > 0 && now - segmentAt >= DEPARTURE_TIMEOUT_MS) {
       Serial.printf("AGV line not reacquired: node=%d front=0x%02X\n",
         node + 1, static_cast<unsigned>(sample.bits));
       stopTrip(State::LineLost);
@@ -1473,30 +1393,6 @@ void trackReverseSegment(uint8_t rearMask, unsigned long now) {
     }
   }
 
-  // On the return leg, the new inspection bar is encountered before junction 8.
-  // Arm after leaving junction 9, pass one full bar, then detect junction 8.
-  if (node == JUNCTION_8 && destination == POINT_2 &&
-      isDispatchPoint(route[0]) && !returnInspectionBarPassed) {
-    if (!returnInspectionBarSeen) {
-      if (rearMask == 0x07) {
-        returnInspectionBarSeen = true;
-        centeredReads = 0;
-        driveAlongLine(APPROACH_SPEED);
-      } else {
-        driveByRearLine(rearMask);
-      }
-      return;
-    }
-    centeredReads = marker ? 0 : centeredReads + 1;
-    if (centeredReads >= STABLE_READS) {
-      returnInspectionBarPassed = true;
-      centeredReads = matchReads = 0;
-      readyForFeature = true;
-    }
-    driveAlongLine(APPROACH_SPEED);
-    return;
-  }
-
   const bool feature = (rearMask & expected) == expected;
   matchReads = feature ? matchReads + 1 : 0;
   // 정차선은 짧게 지나가도 놓치지 않도록 첫 완전 감지에서 정지한다.
@@ -1582,28 +1478,12 @@ void updateReverseTrip(uint8_t rearMask, unsigned long now) {
 }
 
 void updateTrip(const Sample& sample, unsigned long now, uint8_t rearMask) {
+  if (!checkLinePresence(reversing ? rearMask != 0 : sample.count > 0, now)) return;
   if (reversing) {
     updateReverseTrip(rearMask, now);
     return;
   }
   const Node node = route[nextIndex];
-  // The inspection bar is only armed after turn 8 has completed and a fresh
-  // straight line has been observed. Turn-8 tape cannot trigger an inspection.
-  const bool onInspectionApproach = inspectionTrip &&
-    ((node == JUNCTION_8 && phase == Phase::ExitTurn) ||
-     (node == JUNCTION_9 && phase == Phase::Follow));
-  if (onInspectionApproach) {
-    if (!inspectionArmed) {
-      inspectionClearReads = sample.centeredLine() ? inspectionClearReads + 1 : 0;
-      inspectionArmed = inspectionClearReads >= STABLE_READS;
-    }
-    if (inspectionArmed && sample.bits == ((1u << SENSOR_COUNT) - 1)) {
-      drive(0, 0, true);
-      location = destination = NO_NODE;
-      publish(State::Inspecting);
-      return;
-    }
-  }
   const bool forward8To9 = node == JUNCTION_8 && route[nextIndex + 1] == JUNCTION_9;
   const bool junction = node >= JUNCTION_8 && node <= JUNCTION_11;
   const bool approaching9 = node == JUNCTION_9 &&
@@ -1696,7 +1576,7 @@ void updateTrip(const Sample& sample, unsigned long now, uint8_t rearMask) {
       break;
     }
     case Phase::Cross:
-      if (now - phaseAt >= CROSS_TIMEOUT_MS) {
+      if (sample.count > 0 && now - phaseAt >= CROSS_TIMEOUT_MS) {
         Serial.printf("AGV crossing timeout: node=%d front=0x%02X\n", route[nextIndex] + 1,
           static_cast<unsigned>(sample.bits));
         stopTrip(State::TimedOut);
@@ -1864,13 +1744,8 @@ esp_err_t heartbeatRequest(httpd_req_t* request) {
 
 esp_err_t inspectionRequest(httpd_req_t* request) {
   if (!requireControlKey(request) || !requireController(request)) return ESP_OK;
-  const auto value = publicStatus.load();
-  if (rcMode.load() || (value & 0x0f) == static_cast<uint32_t>(State::Paused) || isDriving(static_cast<State>(value & 0x0f)) ||
-      forkMoving.load() || ((value >> 4) & 0x0f) != POINT_2 + 1) {
-    httpd_resp_set_status(request, "409 Conflict");
-    return httpd_resp_sendstr(request, "Inspection departure requires automatic mode at point 2");
-  }
-  return queueCommand(request, INSPECTION_COMMAND);
+  httpd_resp_set_status(request, "410 Gone");
+  return httpd_resp_sendstr(request, "Dark-room inspection is disabled; use /go with the final destination");
 }
 
 esp_err_t pauseRequest(httpd_req_t* request) {
@@ -1997,7 +1872,7 @@ esp_err_t handleCommand(httpd_req_t* request) {
   const Node current = static_cast<Node>(static_cast<int>((status >> 4) & 0x0f) - 1);
   const Node target = static_cast<Node>(point[0] - '1');
   const bool fromInspection = static_cast<State>(status & 0x0f) == State::Inspecting;
-  if (fromInspection ? !isDispatchPoint(target) : !canTravel(current, target)) {
+  if (fromInspection || !canTravel(current, target)) {
     httpd_resp_set_status(request, "409 Conflict");
     return httpd_resp_sendstr(request, "Check the start position and destination");
   }
@@ -2239,7 +2114,7 @@ void loop() {
       clearRcCommand();
       drive(0, 0, true);
     }
-    if (isDriving(state) || state == State::Paused) stopTrip(State::Stopped);
+    stopTrip(State::Stopped); // Cancellation includes idle/legacy inspection waits.
   } else if (command == PAUSE_COMMAND) {
     pauseTrip(now);
   } else if (command == RESUME_COMMAND) {
@@ -2270,7 +2145,7 @@ void loop() {
                servoAngle.load() >= 0) {
       startForkMove(command - FORK_ANGLE_COMMAND_BASE, now);
     } else if (command == INSPECTION_COMMAND) {
-      startInspectionTrip(now);
+      stopTrip(State::Stopped); // Reject any legacy queued inspection command.
     } else if (command == REVERSE_TEST_COMMAND) {
       startReverseTest();
     } else if (command > SET_POSITION_OFFSET && command <= SET_POSITION_OFFSET + POINT_COUNT) {
