@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>실시간 QR · ROI</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#10151b;color:#e6edf4;font:14px system-ui,sans-serif}
+main{height:100dvh;padding:16px;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr) minmax(220px,.65fr);gap:12px}
+section{min-width:0;min-height:0;display:flex;flex-direction:column;border:1px solid #2d3845;border-radius:10px;overflow:hidden;background:#17202a}
+header{padding:14px 16px;border-bottom:1px solid #2d3845;font-weight:650}header span{display:block;font-size:12px;font-weight:400;color:#98aabd;margin-top:5px}
+.picture{position:relative;flex:1;min-height:0;background:#090d12;overflow:hidden}.picture img{width:100%;height:100%;object-fit:contain;display:block}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair}.offline img{visibility:hidden}
+.offline:after{content:'카메라 영상 대기';position:absolute;inset:0;display:grid;place-items:center;color:#788797}
+.info{padding:20px;overflow:auto}.state{color:#a6b5c5;font-size:14px}.state.read{color:#6de5b7}.text{font:600 26px ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:18px 0 26px;line-height:1.5}
+dl{margin:0;font-size:12px;line-height:1.7}dt{color:#8194a8;margin-top:15px}dd{margin:2px 0;color:#d0dbe6;white-space:pre-wrap;overflow-wrap:anywhere}#error{color:#ffb4ac;font-size:13px;line-height:1.6}
+@media(max-width:800px){main{padding:8px;gap:6px;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(150px,.8fr)}header{padding:10px}.info{padding:12px}.text{font-size:20px}}
+</style></head><body><main>
+<section><header>전체 영상<span>드래그해서 QR 영역 지정 · 자동 저장</span></header><div class="picture offline" id="fullBox"><img src="/video/full" alt="전체 카메라 영상"><canvas id="overlay"></canvas></div></section>
+<section><header>ROI 영상<span>선택한 영역만 실시간 판독</span></header><div class="picture offline" id="roiBox"><img src="/video/roi" alt="ROI 영상"></div></section>
+<section><header>QR 정보<span>자동 인식 · 버튼 조작 없음</span></header><div class="info"><div id="state" class="state">연결 중</div><div id="text" class="text">—</div><div id="error"></div><dl><dt>실제 해상도</dt><dd id="resolution">—</dd><dt>실측 FPS</dt><dd id="fps">—</dd><dt>요청 설정</dt><dd id="requested">—</dd><dt>판독 방식</dt><dd id="method">—</dd><dt>인식 시각</dt><dd id="time">—</dd></dl></div></section>
+</main><script>
+const $=id=>document.getElementById(id),canvas=$('overlay'),box=$('fullBox');let roi=[0,0,1,1],resolution=[1920,1080],drag=null,selection=null;
+function bounds(){const r=box.getBoundingClientRect(),scale=Math.min(r.width/resolution[0],r.height/resolution[1]),w=resolution[0]*scale,h=resolution[1]*scale;return{x:(r.width-w)/2,y:(r.height-h)/2,w,h,rect:r}}
+function draw(){const r=box.getBoundingClientRect(),d=devicePixelRatio||1;canvas.width=r.width*d;canvas.height=r.height*d;const ctx=canvas.getContext('2d');ctx.scale(d,d);const b=bounds(),a=selection||roi;ctx.strokeStyle=selection?'#ffcf65':'#63e8b1';ctx.lineWidth=2;ctx.strokeRect(b.x+a[0]*b.w,b.y+a[1]*b.h,a[2]*b.w,a[3]*b.h)}
+function point(e,clamp=false){const b=bounds(),x=(e.clientX-b.rect.left-b.x)/b.w,y=(e.clientY-b.rect.top-b.y)/b.h;if(!clamp&&(x<0||x>1||y<0||y>1))return null;return[Math.max(0,Math.min(1,x)),Math.max(0,Math.min(1,y))]}
+canvas.onpointerdown=e=>{if(box.classList.contains('offline'))return;drag=point(e);if(drag)canvas.setPointerCapture(e.pointerId)};
+canvas.onpointermove=e=>{if(!drag)return;const p=point(e,true);selection=[Math.min(p[0],drag[0]),Math.min(p[1],drag[1]),Math.abs(p[0]-drag[0]),Math.abs(p[1]-drag[1])];draw()};
+canvas.onpointerup=async()=>{if(!drag)return;drag=null;const value=selection;if(!value||value[2]<.01||value[3]<.01){selection=null;draw();return}try{const r=await fetch('/api/roi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roi:value})});if(!r.ok)throw Error((await r.json()).error);roi=value;selection=null;draw()}catch(e){$('error').textContent=e.message;selection=null;draw()}};
+canvas.onpointercancel=()=>{drag=null;selection=null;draw()};new ResizeObserver(draw).observe(box);
+async function status(){try{const r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('서버 상태를 읽지 못했습니다.');const s=await r.json();roi=s.roi;if(s.resolution[0])resolution=s.resolution;for(const id of ['fullBox','roiBox'])$(id).classList.toggle('offline',!s.frame_available);const names={READ:'QR 인식됨',MULTIPLE:'QR 여러 개 감지',UNREADABLE:'QR 미인식',WAITING:'판독 대기',NO_FRAME:'카메라 영상 없음'};$('state').textContent=names[s.result.state]||'판독 대기';$('state').classList.toggle('read',s.result.state==='READ');$('text').textContent=s.result.text||(s.result.state==='MULTIPLE'?s.result.texts.join('\n'):'—');$('time').textContent=s.result.read_at||'—';$('method').textContent=s.result.method==='ORIGINAL'?'원본 ROI':s.result.method==='CLAHE'?'원본 실패 → CLAHE 명암 보정':'—';$('error').textContent=s.camera_error||'';$('resolution').textContent=s.frame_available?s.resolution.join(' × '):'—';$('fps').textContent=`수신 ${s.capture_fps}\n영상 전송 ${s.preview_fps}\nQR 판독 ${s.decode_fps}`;$('requested').textContent=s.requested_resolution.join(' × ')+` · ${s.requested_fps} fps (지원 범위 내)`;draw()}catch(e){$('error').textContent=e.message;$('state').textContent='서버 연결 끊김';$('text').textContent='—';for(const id of ['fullBox','roiBox'])$(id).classList.add('offline')}finally{setTimeout(status,200)}}status();
+</script></body></html>

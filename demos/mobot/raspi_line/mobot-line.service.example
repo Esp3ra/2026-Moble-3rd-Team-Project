@@ -1,0 +1,18 @@
+[Unit]
+Description=MOBOT live LINE v1 bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+SupplementaryGroups=dialout
+WorkingDirectory=/home/pi/mobot-device
+ExecStart=/home/pi/mobot-device/.venv/bin/python -m raspi_line --config /home/pi/mobot-device/raspi_line/config.json
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

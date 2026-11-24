@@ -1,0 +1,407 @@
+Project mobot {
+  database_type: 'MySQL'
+  Note: '7단계 공정 개정 초안. 실행용 MySQL 제약과 설치 방법은 mobot.mysql.sql 및 README.md 참고.'
+}
+
+Table PARTS {
+  part_id varchar(32) [pk]
+  slot varchar(8) [not null, note: 'HEAD, BODY, ARM_L, ARM_R']
+  label varchar(100) [not null]
+  is_enabled boolean [not null, default: true]
+  checks {
+    `slot IN ('HEAD', 'BODY', 'ARM_L', 'ARM_R')`
+    `is_enabled IN (0, 1)`
+  }
+}
+
+Table WEB_PART_OPTIONS {
+  slot varchar(8) [not null]
+  option_code varchar(32) [not null]
+  part_id varchar(32) [ref: > PARTS.part_id, note: 'NULL이면 미확정. 생산 주문으로 변환할 때는 부위 일치 및 활성 부품 필수']
+  indexes {
+    (slot, option_code) [pk]
+  }
+  checks {
+    `slot IN ('HEAD', 'ARM_L', 'ARM_R')`
+  }
+}
+
+Table LOCATIONS {
+  location_code varchar(32) [pk]
+  label varchar(100) [not null]
+  location_kind varchar(16) [not null]
+  checks {
+    `location_kind IN ('PROCESS', 'DESTINATION', 'REJECT', 'RETURN')`
+  }
+}
+
+Table ADMIN_ACCOUNTS {
+  admin_id bigint [pk, increment]
+  auth_issuer varchar(255) [not null]
+  auth_subject varchar(255) [not null]
+  display_name varchar(100) [not null]
+  role_code varchar(16) [not null]
+  is_enabled boolean [not null, default: true]
+  indexes {
+    (auth_issuer, auth_subject) [unique]
+  }
+  checks {
+    `role_code IN ('OPERATOR', 'SUPER_ADMIN')`
+    `is_enabled IN (0, 1)`
+  }
+}
+
+Table EQUIPMENT {
+  equipment_id varchar(32) [pk]
+  equipment_kind varchar(32) [not null]
+  label varchar(100) [not null]
+  run_state varchar(16) [not null, default: 'UNKNOWN']
+  last_seen_at datetime(6)
+  Note: '연결 상태는 마지막 수신과 타임아웃으로 계산. 운전 상태와 독립.'
+  checks {
+    `run_state IN ('UNKNOWN', 'IDLE', 'RUNNING', 'PAUSED', 'ERROR')`
+  }
+}
+
+Table RECIPE_VERSIONS {
+  recipe_version_id bigint [pk, increment]
+  recipe_code varchar(32) [not null]
+  version_no int [not null]
+  config json [not null, note: '검사 기준, 모델 버전, 위치별 라우팅, AGV 높이와 통신 설정 등 확정된 버전별 값']
+  published_at datetime(6)
+  published_by bigint [ref: > ADMIN_ACCOUNTS.admin_id]
+  indexes {
+    (recipe_code, version_no) [unique]
+  }
+  checks {
+    `version_no > 0`
+    `(published_at IS NULL) = (published_by IS NULL)`
+  }
+}
+
+Table RECIPE_STEPS {
+  recipe_version_id bigint [not null, ref: > RECIPE_VERSIONS.recipe_version_id]
+  step_no int [not null, note: '레시피 내 명령 순서']
+  stage_no int [not null, note: '기존 공정 1~7단계 번호']
+  equipment_id varchar(32) [not null, ref: > EQUIPMENT.equipment_id]
+  action_code varchar(32) [not null]
+  parameters json [not null, note: '명령 방식, 좌표계, 단위, 목표 좌표 또는 관절값, 속도 등']
+  indexes {
+    (recipe_version_id, step_no) [pk]
+  }
+  checks {
+    `step_no > 0 AND stage_no BETWEEN 1 AND 7`
+  }
+}
+
+Table ORDERS {
+  job_id varchar(32) [pk]
+  model_name varchar(64) [not null]
+  target_head_id varchar(32) [not null, ref: > PARTS.part_id]
+  target_body_id varchar(32) [not null, ref: > PARTS.part_id]
+  target_arm_l_id varchar(32) [not null, ref: > PARTS.part_id]
+  target_arm_r_id varchar(32) [not null, ref: > PARTS.part_id]
+  target_location_code varchar(32) [ref: > LOCATIONS.location_code, note: '미정인 주문은 승인·시작 전 목적지 확정']
+  status varchar(16) [not null, default: 'PENDING']
+  approval_status varchar(16) [not null, default: 'PENDING']
+  approved_by bigint [ref: > ADMIN_ACCOUNTS.admin_id]
+  approved_at datetime(6)
+  hold_reason varchar(255)
+  created_at datetime(6) [not null, default: `CURRENT_TIMESTAMP(6)`]
+  ended_at datetime(6) [note: '주문 종료 시각. 완료, 실패, 취소, 중단은 status로 구분']
+  indexes {
+    (status, approval_status, created_at)
+  }
+  checks {
+    `status IN ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELED', 'ABORTED')`
+    `approval_status IN ('PENDING', 'APPROVED', 'ON_HOLD')`
+    `(approval_status = 'APPROVED' AND approved_by IS NOT NULL AND approved_at IS NOT NULL AND approved_at >= created_at AND target_location_code IS NOT NULL AND hold_reason IS NULL) OR (approval_status <> 'APPROVED' AND approved_by IS NULL AND approved_at IS NULL AND ((approval_status = 'ON_HOLD') = (hold_reason IS NOT NULL)) AND (hold_reason IS NULL OR CHAR_LENGTH(TRIM(hold_reason)) > 0))`
+    `(ended_at IS NOT NULL) = (status IN ('COMPLETED', 'FAILED', 'CANCELED', 'ABORTED'))`
+    `ended_at IS NULL OR ended_at >= created_at`
+  }
+}
+
+Table PALLETS {
+  pallet_id varchar(32) [pk]
+  current_status varchar(16) [not null, default: 'READY']
+  cycle_count int [not null, default: 0, note: '물리적 회수·재사용 가능으로 확인된 횟수']
+  updated_at datetime(6) [not null, default: `CURRENT_TIMESTAMP(6)`, note: '상태가 바뀌는 트랜잭션에서 명시적으로 갱신']
+  checks {
+    `current_status IN ('READY', 'MAPPED', 'ASSEMBLING', 'INSPECT_1ST', 'AGV_MOVE', 'INSPECT_2ND', 'SORTING', 'RECOVERY')`
+    `cycle_count >= 0`
+  }
+}
+
+Table JOB_PALLET_MAPPINGS {
+  mapping_id bigint [pk, increment, note: '작업 실행 ID']
+  job_id varchar(32) [not null, ref: > ORDERS.job_id]
+  pallet_id varchar(32) [not null, ref: > PALLETS.pallet_id]
+  recipe_version_id bigint [not null, ref: > RECIPE_VERSIONS.recipe_version_id]
+  target_head_id varchar(32) [not null, ref: > PARTS.part_id]
+  target_body_id varchar(32) [not null, ref: > PARTS.part_id]
+  target_arm_l_id varchar(32) [not null, ref: > PARTS.part_id]
+  target_arm_r_id varchar(32) [not null, ref: > PARTS.part_id]
+  target_location_code varchar(32) [not null, ref: > LOCATIONS.location_code]
+  qr_read_status varchar(16) [not null, default: 'NOT_RUN']
+  body_presence varchar(16) [not null, default: 'NOT_RUN']
+  status varchar(16) [not null, default: 'IN_PROGRESS']
+  mapped_at datetime(6) [not null, default: `CURRENT_TIMESTAMP(6)`]
+  ended_at datetime(6) [note: '실행 종료 시각. 상태로 완료, 실패, 취소, 중단을 구분']
+  unmapped_at datetime(6) [note: '팔레트의 물리적 회수·해제 시각. NULL이면 계속 점유']
+  is_active boolean [not null, note: 'MySQL 생성 열. unmapped_at IS NULL']
+  active_pallet_id varchar(32) [unique, note: 'MySQL 생성 열. 점유 중인 경우만 pallet_id']
+  active_job_id varchar(32) [unique, note: 'MySQL 생성 열. 점유 중인 경우만 job_id. 주문당 동시 1건 가정']
+  indexes {
+    (job_id, mapped_at)
+    (pallet_id, mapped_at)
+  }
+  checks {
+    `qr_read_status IN ('NOT_RUN', 'READ', 'FAILED', 'UNKNOWN')`
+    `body_presence IN ('NOT_RUN', 'PRESENT', 'ABSENT', 'UNDETERMINED', 'UNKNOWN')`
+    `status IN ('IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELED', 'ABORTED')`
+    `(ended_at IS NULL) = (status = 'IN_PROGRESS')`
+    `ended_at IS NULL OR ended_at >= mapped_at`
+    `unmapped_at IS NULL OR (ended_at IS NOT NULL AND unmapped_at >= ended_at)`
+  }
+}
+
+Table ASSEMBLY_LOGS {
+  assembly_id bigint [pk, increment]
+  mapping_id bigint [not null, ref: > JOB_PALLET_MAPPINGS.mapping_id]
+  attempt_no int [not null]
+  commanded_head_id varchar(32) [not null, ref: > PARTS.part_id]
+  commanded_arm_l_id varchar(32) [not null, ref: > PARTS.part_id]
+  commanded_arm_r_id varchar(32) [not null, ref: > PARTS.part_id]
+  stopper_clamped boolean [note: 'NULL 미확인. 0 고정 실패, 1 고정 확인']
+  arm_l_motion_done boolean [note: '장비의 동작 결과. NULL 미확인']
+  arm_r_motion_done boolean
+  head_motion_done boolean
+  magnetic_fix_status varchar(16) [not null, default: 'NOT_RUN']
+  magnetic_fix_evidence varchar(512) [note: '물리적 결합 검증 근거. 조립 동작 완료 응답과 별도']
+  status varchar(16) [not null, default: 'RUNNING']
+  started_at datetime(6) [not null]
+  ended_at datetime(6)
+  indexes {
+    (mapping_id, attempt_no) [unique]
+    (mapping_id, assembly_id) [unique]
+  }
+  checks {
+    `attempt_no > 0`
+    `magnetic_fix_status IN ('NOT_RUN', 'UNKNOWN', 'VERIFIED', 'NOT_FIXED', 'UNDETERMINED')`
+    `magnetic_fix_status NOT IN ('VERIFIED', 'NOT_FIXED') OR (magnetic_fix_evidence IS NOT NULL AND CHAR_LENGTH(TRIM(magnetic_fix_evidence)) > 0)`
+    `stopper_clamped IN (0,1) AND arm_l_motion_done IN (0,1) AND arm_r_motion_done IN (0,1) AND head_motion_done IN (0,1)`
+    `status <> 'COMPLETED' OR (stopper_clamped <=> 1 AND arm_l_motion_done <=> 1 AND arm_r_motion_done <=> 1 AND head_motion_done <=> 1)`
+    `status IN ('RUNNING', 'COMPLETED', 'FAILED', 'CANCELED', 'ABORTED')`
+    `(ended_at IS NULL) = (status = 'RUNNING') AND (ended_at IS NULL OR ended_at >= started_at)`
+  }
+}
+
+Table INSPECTION_1ST_LOGS {
+  inspect_1st_id bigint [pk, increment]
+  mapping_id bigint [not null]
+  assembly_id bigint [not null]
+  attempt_no int [not null]
+  parts_presence varchar(16) [not null, default: 'NOT_RUN']
+  tilt_angle_degree decimal(7,3) [note: 'NULL 미측정, 0 실측 0도']
+  result varchar(16) [not null, default: 'NOT_RUN']
+  reason varchar(255)
+  image_path varchar(512)
+  started_at datetime(6)
+  ended_at datetime(6)
+  indexes {
+    (mapping_id, attempt_no) [unique]
+    (mapping_id, assembly_id, inspect_1st_id) [unique]
+  }
+  checks {
+    `attempt_no > 0`
+    `parts_presence IN ('NOT_RUN', 'UNKNOWN', 'ALL_PRESENT', 'MISSING', 'UNDETERMINED')`
+    `result IN ('NOT_RUN', 'RUNNING', 'PASS', 'FAIL', 'UNDETERMINED', 'ABORTED')`
+    `result <> 'PASS' OR parts_presence = 'ALL_PRESENT'`
+    `result NOT IN ('FAIL', 'UNDETERMINED', 'ABORTED') OR (reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason)) > 0)`
+    `(started_at IS NULL) = (result = 'NOT_RUN') AND (ended_at IS NULL) = (result IN ('NOT_RUN', 'RUNNING')) AND (ended_at IS NULL OR ended_at >= started_at)`
+    `result <> 'NOT_RUN' OR (parts_presence = 'NOT_RUN' AND tilt_angle_degree IS NULL AND image_path IS NULL)`
+  }
+}
+
+Table INSPECTION_2ND_LOGS {
+  inspect_2nd_id bigint [pk, increment]
+  mapping_id bigint [not null]
+  assembly_id bigint [not null]
+  baseline_inspect_1st_id bigint [note: '탈락 비교에 사용한 동일 조립 시도의 1차 검사']
+  attempt_no int [not null]
+  qr_verification varchar(16) [not null, default: 'NOT_RUN']
+  actual_head_id varchar(32) [ref: > PARTS.part_id]
+  head_detection varchar(16) [not null, default: 'NOT_RUN']
+  head_confidence decimal(6,5)
+  head_reason varchar(255)
+  actual_arm_l_id varchar(32) [ref: > PARTS.part_id]
+  arm_l_detection varchar(16) [not null, default: 'NOT_RUN']
+  arm_l_confidence decimal(6,5)
+  arm_l_reason varchar(255)
+  actual_arm_r_id varchar(32) [ref: > PARTS.part_id]
+  arm_r_detection varchar(16) [not null, default: 'NOT_RUN']
+  arm_r_confidence decimal(6,5)
+  arm_r_reason varchar(255)
+  side_joint_angle decimal(7,3) [note: 'NULL 미측정. 측정 대상과 정의는 레시피에서 고정']
+  detach_status varchar(20) [not null, default: 'NOT_RUN']
+  detach_evidence varchar(512) [note: '비교 근거 또는 직접 확인 증거']
+  result varchar(16) [not null, default: 'NOT_RUN']
+  reason varchar(255)
+  assigned_location_code varchar(32) [ref: > LOCATIONS.location_code]
+  top_image_path varchar(512)
+  side_image_path varchar(512)
+  started_at datetime(6)
+  ended_at datetime(6)
+  indexes {
+    (mapping_id, attempt_no) [unique]
+    (mapping_id, inspect_2nd_id) [unique]
+  }
+  checks {
+    `attempt_no > 0`
+    `qr_verification IN ('NOT_RUN', 'UNKNOWN', 'MATCH', 'MISMATCH', 'UNDETERMINED')`
+    `head_detection IN ('NOT_RUN', 'UNKNOWN', 'IDENTIFIED', 'ABSENT', 'UNDETERMINED') AND (head_detection = 'IDENTIFIED') = (actual_head_id IS NOT NULL) AND (head_confidence IS NULL OR (head_detection IN ('IDENTIFIED', 'ABSENT', 'UNDETERMINED') AND head_confidence BETWEEN 0 AND 1)) AND (head_detection NOT IN ('ABSENT', 'UNDETERMINED') OR (head_reason IS NOT NULL AND CHAR_LENGTH(TRIM(head_reason)) > 0))`
+    `arm_l_detection IN ('NOT_RUN', 'UNKNOWN', 'IDENTIFIED', 'ABSENT', 'UNDETERMINED') AND (arm_l_detection = 'IDENTIFIED') = (actual_arm_l_id IS NOT NULL) AND (arm_l_confidence IS NULL OR (arm_l_detection IN ('IDENTIFIED', 'ABSENT', 'UNDETERMINED') AND arm_l_confidence BETWEEN 0 AND 1)) AND (arm_l_detection NOT IN ('ABSENT', 'UNDETERMINED') OR (arm_l_reason IS NOT NULL AND CHAR_LENGTH(TRIM(arm_l_reason)) > 0))`
+    `arm_r_detection IN ('NOT_RUN', 'UNKNOWN', 'IDENTIFIED', 'ABSENT', 'UNDETERMINED') AND (arm_r_detection = 'IDENTIFIED') = (actual_arm_r_id IS NOT NULL) AND (arm_r_confidence IS NULL OR (arm_r_detection IN ('IDENTIFIED', 'ABSENT', 'UNDETERMINED') AND arm_r_confidence BETWEEN 0 AND 1)) AND (arm_r_detection NOT IN ('ABSENT', 'UNDETERMINED') OR (arm_r_reason IS NOT NULL AND CHAR_LENGTH(TRIM(arm_r_reason)) > 0))`
+    `detach_status IN ('NOT_RUN', 'UNKNOWN', 'NO_EVIDENCE', 'SUSPECTED', 'CONFIRMED', 'UNDETERMINED')`
+    `detach_status <> 'SUSPECTED' OR baseline_inspect_1st_id IS NOT NULL`
+    `detach_status NOT IN ('SUSPECTED', 'CONFIRMED') OR (detach_evidence IS NOT NULL AND CHAR_LENGTH(TRIM(detach_evidence)) > 0)`
+    `result IN ('NOT_RUN', 'RUNNING', 'PASS', 'MISMATCH', 'DEFECT', 'HOLD', 'UNDETERMINED', 'ABORTED')`
+    `result <> 'PASS' OR (qr_verification = 'MATCH' AND head_detection = 'IDENTIFIED' AND arm_l_detection = 'IDENTIFIED' AND arm_r_detection = 'IDENTIFIED' AND detach_status NOT IN ('SUSPECTED', 'CONFIRMED'))`
+    `result NOT IN ('MISMATCH', 'DEFECT', 'HOLD', 'UNDETERMINED', 'ABORTED') OR (reason IS NOT NULL AND CHAR_LENGTH(TRIM(reason)) > 0)`
+    `assigned_location_code IS NULL OR result IN ('PASS', 'MISMATCH', 'DEFECT', 'HOLD')`
+    `(started_at IS NULL) = (result = 'NOT_RUN') AND (ended_at IS NULL) = (result IN ('NOT_RUN', 'RUNNING')) AND (ended_at IS NULL OR ended_at >= started_at)`
+    `result <> 'NOT_RUN' OR (qr_verification = 'NOT_RUN' AND head_detection = 'NOT_RUN' AND arm_l_detection = 'NOT_RUN' AND arm_r_detection = 'NOT_RUN' AND detach_status = 'NOT_RUN' AND side_joint_angle IS NULL AND top_image_path IS NULL AND side_image_path IS NULL)`
+  }
+}
+
+Table EQUIPMENT_COMMANDS {
+  command_id varchar(64) [pk, note: '발행 전에 생성하는 멱등 키. 전송 재시도는 같은 ID']
+  equipment_id varchar(32) [not null, ref: > EQUIPMENT.equipment_id]
+  mapping_id bigint [ref: > JOB_PALLET_MAPPINGS.mapping_id]
+  command_type varchar(32) [not null]
+  payload json [not null]
+  status varchar(16) [not null, default: 'ISSUED']
+  issued_at datetime(6) [not null, default: `CURRENT_TIMESTAMP(6)`]
+  accepted_at datetime(6)
+  started_at datetime(6)
+  ended_at datetime(6)
+  error_detail varchar(255)
+  indexes {
+    (equipment_id, status, issued_at)
+    (mapping_id, issued_at)
+  }
+  checks {
+    `status IN ('ISSUED', 'ACCEPTED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELED', 'ABORTED')`
+    `status NOT IN ('ACCEPTED', 'RUNNING', 'COMPLETED') OR accepted_at IS NOT NULL`
+    `status NOT IN ('RUNNING', 'COMPLETED') OR started_at IS NOT NULL`
+    `status NOT IN ('ISSUED', 'ACCEPTED') OR started_at IS NULL`
+    `status <> 'ISSUED' OR accepted_at IS NULL`
+    `(ended_at IS NOT NULL) = (status IN ('COMPLETED', 'FAILED', 'CANCELED', 'ABORTED'))`
+    `accepted_at IS NULL OR accepted_at >= issued_at`
+    `started_at IS NULL OR (accepted_at IS NOT NULL AND started_at >= accepted_at)`
+    `ended_at IS NULL OR ended_at >= COALESCE(started_at, accepted_at, issued_at)`
+    `status <> 'FAILED' OR (error_detail IS NOT NULL AND CHAR_LENGTH(TRIM(error_detail)) > 0)`
+  }
+}
+
+Table AGV_TRANSPORT_LOGS {
+  agv_log_id bigint [pk, increment]
+  mapping_id bigint [not null, ref: > JOB_PALLET_MAPPINGS.mapping_id]
+  agv_id varchar(32) [not null, ref: > EQUIPMENT.equipment_id]
+  command_id varchar(64) [unique, ref: > EQUIPMENT_COMMANDS.command_id]
+  from_location_code varchar(32) [not null, ref: > LOCATIONS.location_code]
+  planned_to_location_code varchar(32) [not null, ref: > LOCATIONS.location_code]
+  actual_to_location_code varchar(32) [ref: > LOCATIONS.location_code, note: '실측 또는 장비 확인 위치. 하역 성공이면 필수']
+  docking_sensor_ok boolean [note: '센서 자체의 정상 여부. NULL 미확인']
+  pallet_present boolean [note: '팔레트 감지 여부. NULL 미확인']
+  fork_lift_completed boolean [note: '목표 높이 또는 리미트 도달 확인. NULL 미확인']
+  handshake_ok boolean [note: '핸드셰이크 성공 여부. NULL 미확인']
+  action_type varchar(16) [not null]
+  status varchar(16) [not null, default: 'RUNNING']
+  started_at datetime(6) [not null]
+  ended_at datetime(6)
+  indexes {
+    (mapping_id, started_at)
+    (mapping_id, agv_log_id) [unique]
+  }
+  checks {
+    `action_type IN ('TAKEOVER', 'UNLOAD')`
+    `docking_sensor_ok IN (0,1) AND pallet_present IN (0,1) AND fork_lift_completed IN (0,1) AND handshake_ok IN (0,1)`
+    `status IN ('RUNNING', 'COMPLETED', 'FAILED', 'CANCELED', 'ABORTED')`
+    `action_type <> 'UNLOAD' OR status <> 'COMPLETED' OR actual_to_location_code IS NOT NULL`
+    `(ended_at IS NULL) = (status = 'RUNNING') AND (ended_at IS NULL OR ended_at >= started_at)`
+  }
+}
+
+Table SORTING_RESULTS {
+  mapping_id bigint [pk, not null, ref: - JOB_PALLET_MAPPINGS.mapping_id]
+  inspect_2nd_id bigint [not null, note: '최종 분류에 실제 사용한 2차 검사 행']
+  unload_agv_log_id bigint [note: '실제 하역 구역은 이 이력의 actual_to_location_code']
+  classified_at datetime(6) [not null]
+  pallet_returned_at datetime(6)
+  Note: '분류와 배정 구역은 선택된 검사의 result, assigned_location_code로 조회. 완료는 실행 ended_at 참조.'
+  checks {
+    `pallet_returned_at IS NULL OR (unload_agv_log_id IS NOT NULL AND pallet_returned_at >= classified_at)`
+  }
+}
+
+Table ALARM_LOGS {
+  alarm_id bigint [pk, increment]
+  equipment_id varchar(32) [not null, ref: > EQUIPMENT.equipment_id]
+  mapping_id bigint [ref: > JOB_PALLET_MAPPINGS.mapping_id]
+  error_code varchar(64) [not null]
+  description varchar(500) [not null]
+  severity varchar(16) [not null, default: 'WARNING']
+  occurred_at datetime(6) [not null]
+  resolved_by bigint [ref: > ADMIN_ACCOUNTS.admin_id]
+  resolved_at datetime(6)
+  resolution varchar(500)
+  indexes {
+    (equipment_id, occurred_at)
+    (mapping_id, occurred_at)
+    (resolved_at, occurred_at)
+  }
+  checks {
+    `severity IN ('INFO', 'WARNING', 'CRITICAL')`
+    `(resolved_at IS NULL AND resolved_by IS NULL AND resolution IS NULL) OR (resolved_at IS NOT NULL AND resolved_by IS NOT NULL AND resolution IS NOT NULL AND CHAR_LENGTH(TRIM(resolution)) > 0 AND resolved_at >= occurred_at)`
+  }
+}
+
+Table EQUIPMENT_EVENTS {
+  event_id bigint [pk, increment]
+  equipment_id varchar(32) [not null, ref: > EQUIPMENT.equipment_id]
+  mapping_id bigint [ref: > JOB_PALLET_MAPPINGS.mapping_id]
+  command_id varchar(64) [ref: > EQUIPMENT_COMMANDS.command_id]
+  event_key varchar(64) [not null, note: '장비/게이트웨이가 재전송에도 유지하는 이벤트 ID']
+  event_type varchar(32) [not null]
+  occurred_at datetime(6) [not null]
+  detail json
+  indexes {
+    (equipment_id, event_key) [unique]
+    (equipment_id, occurred_at)
+    (mapping_id, occurred_at)
+    (command_id, occurred_at)
+  }
+}
+
+Table ADMIN_ACTION_LOGS {
+  audit_id bigint [pk, increment]
+  admin_id bigint [not null, ref: > ADMIN_ACCOUNTS.admin_id]
+  action_code varchar(32) [not null]
+  entity_type varchar(32) [not null]
+  entity_id varchar(64) [not null, note: '여러 대상 유형을 기록하는 감사 참조. FK 대신 서비스에서 대상 검증']
+  before_data json
+  after_data json
+  reason varchar(255)
+  occurred_at datetime(6) [not null, default: `CURRENT_TIMESTAMP(6)`]
+  indexes {
+    (entity_type, entity_id, occurred_at)
+    (admin_id, occurred_at)
+  }
+}
+
+Ref: INSPECTION_1ST_LOGS.(mapping_id, assembly_id) > ASSEMBLY_LOGS.(mapping_id, assembly_id)
+Ref: INSPECTION_2ND_LOGS.(mapping_id, assembly_id) > ASSEMBLY_LOGS.(mapping_id, assembly_id)
+Ref: INSPECTION_2ND_LOGS.(mapping_id, assembly_id, baseline_inspect_1st_id) > INSPECTION_1ST_LOGS.(mapping_id, assembly_id, inspect_1st_id)
+Ref: SORTING_RESULTS.(mapping_id, inspect_2nd_id) > INSPECTION_2ND_LOGS.(mapping_id, inspect_2nd_id)
+Ref: SORTING_RESULTS.(mapping_id, unload_agv_log_id) > AGV_TRANSPORT_LOGS.(mapping_id, agv_log_id)

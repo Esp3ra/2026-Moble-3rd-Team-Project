@@ -1,0 +1,35 @@
+    def scan_test_qr(self):
+        require(not self.simulation,'실제 카메라 QR 시험은 실물 또는 운송 시험 모드에서 실행하세요.',409,'BAD_TRANSITION')
+        frame,frame_id,captured=self.frame_data('cam1')
+        result=dict(state='NO_FRAME',pallet_id=None,frame_id=frame_id,captured_at=captured,decoded_values=[])
+        if frame is None:return result
+        detector=cv2.QRCodeDetector()
+        ok,values,points,_=detector.detectAndDecodeMulti(frame)
+        if points is not None and len(points)>1:
+            result.update(state='MULTIPLE_QR',decoded_values=[v[:120] for v in values if v][:8]);return result
+        value=values[0] if ok and len(values)==1 else None
+        if points is None:value,_,_=detector.detectAndDecode(frame)
+        result['decoded_values']=[value[:120]] if value else []
+        result['state']='UNREADABLE' if not value else 'READ' if re.fullmatch(r'PALLET-0[1-8]',value) else 'INVALID_QR'
+        if result['state']=='READ':result['pallet_id']=value
+        return result
+
+    def read_feed_qr(self,cycle,read_id,attempt):
+        if self.simulation:
+            if self.qr_inputs:pallet=self.qr_inputs.pop(0)
+            else:
+                with self.app.app_context(),transaction() as db:
+                    row=db.execute("SELECT pallet_id FROM V1_PALLETS WHERE stage='READY' AND cycle_id IS NULL ORDER BY pallet_id LIMIT 1").fetchone()
+                    pallet=row[0] if row else None
+            return dict(frame_id=uid(),pallet_id=pallet,attempt=attempt,read_id=read_id)
+        frame,frame_id,_=self.frame_data('cam1');pallet=None
+        if frame is not None:
+            detector=cv2.QRCodeDetector()
+            ok,values,points,_=detector.detectAndDecodeMulti(frame)
+            value=None
+            if points is not None:
+                if ok and len(points)==1 and len(values)==1:value=values[0]
+            else:
+                value,_,_=detector.detectAndDecode(frame)
+            if isinstance(value,str) and re.fullmatch(r'PALLET-0[1-8]',value):pallet=value
+        return dict(frame_id=frame_id,pallet_id=pallet,attempt=attempt,read_id=read_id)

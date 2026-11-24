@@ -1,50 +1,114 @@
 using System.ComponentModel;
-using System.Runtime.CompilerServices;
+using System.IO;
+using System.Net.Http;
+using System.Text.Json;
 using System.Windows.Input;
+using System.Runtime.CompilerServices;
+using RobotFactory.Admin.Services;
 namespace RobotFactory.Admin.ViewModels;
 
-// 화면 전용 샘플 모델이다. 팀 공통 API/DTO/DB 계약을 정의하지 않는다.
-public sealed record OrderPreview(string Id, string Model, string Parts, string State);
-public sealed record PalletPreview(string Qr, string State, string Cycle, string Updated);
-public sealed record EventPreview(string Time, string Message);
-public sealed record PartPreview(string Part, string Expected, string Observed);
-
-public sealed class DashboardViewModel
+public sealed class LoginViewModel : INotifyPropertyChanged
 {
-    public IReadOnlyList<string> Connections { get; } = ["업무 서버·DB  미연결", "Pi  미연결", "Arduino  미연결", "myCobot  미연결", "카메라  미연결", "AGV·ESP32  미연결"];
-    public IReadOnlyList<string> ProcessSteps { get; } = ["1  주문·QR", "2  컨베이어 정차", "3  머리·팔 조립", "4  AGV 인계", "5  비전 검사", "6  목적지 이송"];
-    public IReadOnlyList<OrderPreview> Orders { get; } = [
-        new("ORD-024", "모델 A", "H1 · 왼팔 A2 · 오른팔 A2", "검사 중 · 예시"),
-        new("ORD-023", "모델 B", "H2 · 왼팔 A1 · 오른팔 A1", "검사 보류 · 예시"),
-        new("ORD-025", "모델 A", "H1 · 왼팔 A2 · 오른팔 A2", "대기 · 예시"),
-        new("ORD-026", "모델 C", "H2 · 왼팔 A2 · 오른팔 A1", "대기 · 예시")];
-    public IReadOnlyList<PalletPreview> Pallets { get; } = [
-        new("PALLET-01", "INSPECT_1ST", "0", "10:24:08"),
-        new("PALLET-02", "READY", "0", "10:17:07"),
-        new("PALLET-03", "READY", "0", "10:17:07"),
-        new("PALLET-04", "READY", "0", "10:23:10")];
-    public IReadOnlyList<PartPreview> Parts { get; } = [new("머리", "H1", "수신 대기"), new("왼팔", "A2", "수신 대기"), new("오른팔", "A2", "수신 대기")];
-    public IReadOnlyList<EventPreview> Events { get; } = [new("10:24:08", "ORD-024 · 검사대 도착 예시"), new("10:23:41", "ORD-024 · AGV 인계 예시"), new("10:22:56", "ORD-023 · 검사 보류 예시")];
-    public string SelectedOrderId => "ORD-024";
-    public string ExpectedQr => "PALLET-01";
-    public string ScannedQr => "수신 없음";
-    public string QrMatchState => "확인 대기";
+    private readonly AuthApiClient api = new();
+    private bool busy;
+    private string status = "아이디와 비밀번호로 로그인하세요.";
+    public string ServerAddress { get; set; } = Environment.GetEnvironmentVariable("MOBOT_API_URL") ?? "http://127.0.0.1:8000";
+    public string LoginId { get; set; } = "";
+    public bool CanSubmit => !busy;
+    public string Status { get => status; private set { status = value; Notify(); } }
+    public event Action<Uri, AdminSession>? LoggedIn;
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void Notify([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new(name));
+    public void SetStatus(string message) => Status = message;
+
+    public async Task LoginAsync(string password)
+    {
+        if (busy) return;
+        if (!Uri.TryCreate(ServerAddress, UriKind.Absolute, out var server) ||
+            (server.Scheme != "http" && server.Scheme != "https") || !string.IsNullOrEmpty(server.UserInfo))
+        {
+            Status = "http 또는 https 서버 주소를 입력하세요.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(LoginId) || string.IsNullOrEmpty(password))
+        {
+            Status = "아이디와 비밀번호를 입력하세요.";
+            return;
+        }
+        busy = true;
+        Notify(nameof(CanSubmit));
+        Status = "로그인 확인 중";
+        try
+        {
+            var session = await api.LoginAsync(server, LoginId.Trim(), password);
+            Status = "로그인했습니다.";
+            LoggedIn?.Invoke(server, session);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or JsonException or IOException)
+        {
+            Status = exception is OperationCanceledException ? "서버 응답 시간이 초과됐습니다." : exception.Message;
+        }
+        finally { busy = false; Notify(nameof(CanSubmit)); }
+    }
 }
-public sealed class LoginViewModel { }
+
 public sealed class MainViewModel : INotifyPropertyChanged
 {
-    private readonly DashboardViewModel dashboard = new();
+    private DashboardViewModel? dashboard;
     private readonly LoginViewModel login = new();
+    private readonly AuthApiClient auth = new();
+    private AdminSession? session;
+    private Uri? server;
     private object currentView;
     public object CurrentView { get => currentView; private set { currentView = value; OnPropertyChanged(); } }
+    public bool IsLoggedIn => session is not null;
+    public bool IsLoggedOut => !IsLoggedIn;
+    public string SessionDisplay => session is null ? "관리자 로그인이 필요합니다." : $"{session.Account.DisplayName} · {session.Account.DisplayRole}";
     public ICommand ShowDashboardCommand { get; }
     public ICommand ShowLoginCommand { get; }
     public MainViewModel()
     {
-        currentView = dashboard;
-        // 화면 미리보기 탐색이다. 로그인 성공이나 권한 부여를 의미하지 않는다.
-        ShowDashboardCommand = new NavigationCommand(() => CurrentView = dashboard);
-        ShowLoginCommand = new NavigationCommand(() => CurrentView = login);
+        currentView = login;
+        login.LoggedIn += StartSession;
+        ShowDashboardCommand = new NavigationCommand(() => { if (IsLoggedIn && dashboard is not null) CurrentView = dashboard; });
+        ShowLoginCommand = new NavigationCommand(() => { if (!IsLoggedIn) CurrentView = login; });
+    }
+    private void StartSession(Uri address, AdminSession authenticated)
+    {
+        session = authenticated;
+        server = address;
+        dashboard = new DashboardViewModel { ServerAddress = address.ToString(), AdminToken = authenticated.Token, IsSuperAdmin = authenticated.Account.Role == "SUPER_ADMIN" };
+        dashboard.SessionExpired += () => EndSession("로그인이 해제되었거나 권한이 변경되었습니다. 다시 로그인하세요.");
+        CurrentView = dashboard;
+        NotifySession();
+    }
+    private void EndSession(string message)
+    {
+        dashboard?.ClearSession();
+        dashboard = null;
+        session = null;
+        server = null;
+        login.SetStatus(message);
+        CurrentView = login;
+        NotifySession();
+    }
+    public async Task LogoutAsync()
+    {
+        if (session is null || server is null) return;
+        var token = session.Token;
+        var address = server;
+        EndSession("로그아웃했습니다.");
+        try { await auth.LogoutAsync(address, token); }
+        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or IOException)
+        {
+            if (!IsLoggedIn) login.SetStatus("앱에서 로그아웃했습니다. 서버 세션 해제 응답을 받지 못했습니다.");
+        }
+    }
+    private void NotifySession()
+    {
+        OnPropertyChanged(nameof(IsLoggedIn));
+        OnPropertyChanged(nameof(IsLoggedOut));
+        OnPropertyChanged(nameof(SessionDisplay));
     }
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new(name));
