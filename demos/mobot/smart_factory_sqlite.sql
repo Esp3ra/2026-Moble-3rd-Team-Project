@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS ORDERS (
     target_head_id TEXT NOT NULL,                -- 머리 부품 (H1, H2)
     target_arm_l_id TEXT NOT NULL,               -- 왼팔 부품 (L1, L2, L3)
     target_arm_r_id TEXT NOT NULL,               -- 오른팔 부품 (R1, R2, R3)
-    target_station INTEGER CHECK (target_station IN (3, 4, 5, 6, 7)), -- 3 서울, 4 평택, 5 수원, 6 오류1, 7 오류2, NULL 미배정
+    target_station INTEGER CHECK (target_station IN (3, 4, 5, 6, 7)), -- 3 서울, 4 대전, 5 천안, 6 오류1, 7 오류2, NULL 미배정
     status TEXT NOT NULL DEFAULT 'PENDING',      -- PENDING, IN_PROGRESS, COMPLETED, CANCELED
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (account_id) REFERENCES ACCOUNTS(account_id) ON UPDATE CASCADE ON DELETE SET NULL
