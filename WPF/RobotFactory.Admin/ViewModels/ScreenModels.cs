@@ -1,16 +1,74 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+
 namespace RobotFactory.Admin.ViewModels;
 
-// 화면 전용 샘플 모델이다. 팀 공통 API/DTO/DB 계약을 정의하지 않는다.
+// ── 통신규약 v0.2.0 고정 인자명 준수 (인자명 변경 불가) ─────────────────────
+public static class RoleConstants
+{
+    public const string Admin = "ADMIN";             // 1차 관리자 (현장 라인 운영)
+    public const string SuperAdmin = "SUPER_ADMIN";   // 최상위 관리자 (시스템 총괄)
+}
+
+public sealed record UserAccount(
+    string account_id,
+    string login_id,
+    string display_name,
+    string role
+);
+
+/// <summary>
+/// 기능별 권한 매트릭스 (OpenAPI & 팀 규약 19, 20번 기준)
+/// </summary>
+public sealed class RolePermissions
+{
+    public string Role { get; }
+    public bool IsSuperAdmin => Role == RoleConstants.SuperAdmin;
+    public bool IsAdminOrAbove => Role == RoleConstants.Admin || Role == RoleConstants.SuperAdmin;
+
+    public RolePermissions(string role)
+    {
+        Role = role ?? RoleConstants.Admin;
+    }
+
+    // ── [1차 관리자(ADMIN) & 최상위 관리자(SUPER_ADMIN) 공통 권한] ────────
+    public bool CanApproveOrder => IsAdminOrAbove;       // 주문 수락 (생산 승인)
+    public bool CanCancelOrder => IsAdminOrAbove;        // 대기 주문 취소
+    public bool CanPauseResumePlant => IsAdminOrAbove;   // 설비 비상정지 / 재개
+    public bool CanRetryQr => IsAdminOrAbove;            // 투입 QR 재판독 요청
+    public bool CanReconcile => IsAdminOrAbove;          // 통신 복구 후 실물 상태 대조
+    public bool CanManualAction => IsAdminOrAbove;       // 수동 장비 조작 (컨베이어/AGV)
+    public bool CanViewCameras => IsAdminOrAbove;        // 실시간 카메라(CAM1~4) 조회
+    public bool CanViewHistory => IsAdminOrAbove;        // 공정 이력/로그 열람
+    public bool CanViewStock => IsAdminOrAbove;          // 현재 부품 재고 수량 확인
+
+    // ── [최상위 관리자(SUPER_ADMIN) 전용 특수 권한] ───────────────────────
+    public bool CanRestock => IsSuperAdmin;              // 부품 재입고 수량 등록 (POST /stock/restocks)
+    public bool CanManageAccounts => IsSuperAdmin;       // 관리자 계정 생성/권한 변경 (POST /accounts)
+    public bool CanQuerySettlement => IsSuperAdmin;      // 모의 결산 집계 조회 (POST /settlements/query)
+    public bool CanChangeSettings => IsSuperAdmin;       // 설비 설정 프로필 변경 (GET/PUT /settings)
+    public bool CanDeleteArchive => IsSuperAdmin;        // 보관자료 영구 삭제 (POST /archive/delete)
+
+    public string RoleDisplayTitle => IsSuperAdmin ? "최상위 관리자 (SUPER_ADMIN)" : "1차 관리자 (ADMIN)";
+}
+
+// ── 화면 전용 샘플 모델 ──────────────────────────────────────────────
 public sealed record OrderPreview(string Id, string Model, string Parts, string State);
 public sealed record PalletPreview(string Qr, string State, string Cycle, string Updated);
 public sealed record EventPreview(string Time, string Message);
 public sealed record PartPreview(string Part, string Expected, string Observed);
 
-public sealed class DashboardViewModel
+public sealed class DashboardViewModel : INotifyPropertyChanged
 {
+    private RolePermissions permissions = new(RoleConstants.SuperAdmin); // 기본: 최상위 권한 (토글 가능)
+
+    public RolePermissions Permissions
+    {
+        get => permissions;
+        set { permissions = value; OnPropertyChanged(); }
+    }
+
     public IReadOnlyList<string> Connections { get; } = ["업무 서버·DB  미연결", "Pi  미연결", "Arduino  미연결", "myCobot  미연결", "카메라  미연결", "AGV·ESP32  미연결"];
     public IReadOnlyList<string> ProcessSteps { get; } = ["1  주문·QR", "2  컨베이어 정차", "3  머리·팔 조립", "4  AGV 인계", "5  비전 검사", "6  목적지 이송"];
     public IReadOnlyList<OrderPreview> Orders { get; } = [
@@ -29,8 +87,19 @@ public sealed class DashboardViewModel
     public string ExpectedQr => "PALLET-01";
     public string ScannedQr => "수신 없음";
     public string QrMatchState => "확인 대기";
+
+    // 권한 전환 테스트용 메서드
+    public void SetRole(string role)
+    {
+        Permissions = new RolePermissions(role);
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new(name));
 }
+
 public sealed class LoginViewModel { }
+
 public sealed class MainViewModel : INotifyPropertyChanged
 {
     private readonly DashboardViewModel dashboard = new();
@@ -39,16 +108,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public object CurrentView { get => currentView; private set { currentView = value; OnPropertyChanged(); } }
     public ICommand ShowDashboardCommand { get; }
     public ICommand ShowLoginCommand { get; }
+
     public MainViewModel()
     {
         currentView = dashboard;
-        // 화면 미리보기 탐색이다. 로그인 성공이나 권한 부여를 의미하지 않는다.
         ShowDashboardCommand = new NavigationCommand(() => CurrentView = dashboard);
         ShowLoginCommand = new NavigationCommand(() => CurrentView = login);
     }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new(name));
 }
+
 internal sealed class NavigationCommand(Action action) : ICommand
 {
     public bool CanExecute(object? parameter) => true;

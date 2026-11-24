@@ -13,7 +13,9 @@
     <TextBlock Text="로봇팔&#10;상태 미수신" /><TextBlock Text="컨베이어&#10;센서 미수신" /><TextBlock Text="AGV&#10;위치·배터리 미수신" />
    </UniformGrid>
    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-    <Button Content="일시정지" IsEnabled="False" Margin="0,0,8,0" /><Button Content="■ 소프트웨어 정지" IsEnabled="False" Foreground="#AB2838" />
+    <TextBlock Text="{Binding Permissions.RoleDisplayTitle}" Foreground="{StaticResource Blue}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+    <Button Content="일시정지" IsEnabled="{Binding Permissions.CanPauseResumePlant}" Margin="0,0,8,0" />
+    <Button Content="■ 소프트웨어 정지" IsEnabled="{Binding Permissions.CanPauseResumePlant}" Foreground="#AB2838" />
    </StackPanel>
   </Grid>
   <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,0,0,10">
@@ -35,7 +37,7 @@
        <StackPanel><TextBlock Text="{Binding Id}" FontWeight="SemiBold" /><TextBlock Text="{Binding Parts}" FontSize="12" Margin="0,3" /><TextBlock Text="{Binding State}" Style="{StaticResource MutedText}" /></StackPanel>
       </Border></DataTemplate></ItemsControl.ItemTemplate>
      </ItemsControl>
-     <Button Grid.Row="2" Content="선택 주문 생산 승인" IsEnabled="False" Style="{StaticResource PrimaryButton}" />
+     <Button Grid.Row="2" Content="선택 주문 생산 승인" IsEnabled="{Binding Permissions.CanApproveOrder}" Style="{StaticResource PrimaryButton}" />
     </Grid>
    </Border>
    <Border Grid.Column="2" Style="{StaticResource Card}">
