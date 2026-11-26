@@ -247,7 +247,11 @@ partial class CameraWindow : Form
                             lock (sync) { pending=latest; latest=null; }
                             using (var raw = pending) {
                                 if (raw == null) {
-                                    if ((DateTime.UtcNow-lastFrame).TotalSeconds > 8) throw new IOException("영상이 없습니다. 카메라 연결 및 Windows 카메라 권한을 확인하세요.");
+                                    if ((DateTime.UtcNow-lastFrame).TotalSeconds > 8)
+                                    {
+                                        if (request != null) FinishIncompleteCapture();
+                                        throw new IOException("영상이 없습니다. 카메라 연결 및 Windows 카메라 권한을 확인하세요.");
+                                    }
                                     await Task.Delay(25); continue;
                                 }
                                 {
@@ -320,8 +324,12 @@ static class Program
 
     static void InspectImages(string[] args)
     {
-        if (args.Length < 6)
-            throw new ArgumentException("--inspect-images regions.json H1 L1 R2 image1.jpg [image2.jpg image3.jpg]");
+        const string confirmOption = "--confirm-visible";
+        var imageArguments = args.Skip(5).ToArray();
+        bool visibilityConfirmed = imageArguments.Contains(confirmOption);
+        var imagePaths = imageArguments.Where(argument => argument != confirmOption).ToArray();
+        if (imagePaths.Length == 0 || imagePaths.Any(path => path.StartsWith("--", StringComparison.Ordinal)))
+            throw new ArgumentException("--inspect-images regions.json H1 L1 R2 image1.jpg [image2.jpg image3.jpg] [--confirm-visible]");
         var rects = new JavaScriptSerializer().Deserialize<float[][]>(File.ReadAllText(args[1]));
         if (rects == null || rects.Any(rect => rect == null || rect.Length != 4))
             throw new ArgumentException("regions.json에 [left, top, right, bottom] 영역 3개를 넣으세요.");
@@ -331,7 +339,7 @@ static class Program
         using (var detector = new Detector())
         using (var sha = SHA256.Create())
         {
-            foreach (string path in args.Skip(5))
+            foreach (string path in imagePaths)
             {
                 using (var image = new Bitmap(path))
                 using (var pixels = new MemoryStream())
@@ -341,7 +349,7 @@ static class Program
                     frames.Add(new InspectionFrame { Size = image.Size, Fingerprint = fingerprint, Hits = detector.Predict(image) });
                 }
             }
-            Console.WriteLine(ResultJson(InspectionEngine.Evaluate(frames, regions, expected, detector.Names, true)));
+            Console.WriteLine(ResultJson(InspectionEngine.Evaluate(frames, regions, expected, detector.Names, visibilityConfirmed)));
         }
     }
 

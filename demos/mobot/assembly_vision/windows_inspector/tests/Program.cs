@@ -38,6 +38,14 @@ static class Program
             .observations["left"].Hold == ObservationHold.UnstableSignal, "unstable detection");
         var combined = InspectionEngine.Evaluate(empty, regions, new[] { "H2", "L1", "R1" }, classes, true);
         Expect(combined.verdict == "PART_MISSING" && combined.defects.Count == 2, "both defect types reported");
+        var noFrame = InspectionEngine.CaptureFailure(expected, 0);
+        Expect(noFrame.verdict == "INDETERMINATE" && noFrame.reasons.Count == 1 &&
+            noFrame.reasons[0] == "NO_FRAME" && noFrame.frame_count == 0, "capture without frames");
+        var incomplete = InspectionEngine.CaptureFailure(expected, 2);
+        Expect(incomplete.verdict == "INDETERMINATE" && incomplete.reasons.Count == 1 &&
+            incomplete.reasons[0] == "INSUFFICIENT_FRAMES" && incomplete.frame_count == 2, "capture with missing frames");
+        Expect(incomplete.expected["left"] == "L1" && incomplete.defects.Count == 0 &&
+            incomplete.observations["left"].observation == "UNKNOWN", "incomplete capture retains order and unknown observation");
         Console.WriteLine("Inspection smoke tests passed.");
     }
 

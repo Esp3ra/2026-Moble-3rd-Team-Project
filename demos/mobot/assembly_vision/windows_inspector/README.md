@@ -13,8 +13,12 @@ Windows 10 22H2 또는 Windows 11 x64, .NET SDK 10, .NET Framework 4.8 개발자
 
 부품 후보가 없는 서로 다른 프레임 3장과 정위치·가림 없음 확인을 바탕으로 누락을 판정합니다. 확인이 필요한 경우 촬영 화면과 함께 해당 부위를 표시합니다. 약한 후보나 검출 불일치는 부위별로 보류 사유를 보여줍니다.
 
+주문 부품 선택을 변경하면 화면의 판정과 JSON 복사 버튼이 초기화됩니다. 촬영 시간이 초과되면 프레임이 없는 경우 `NO_FRAME`, 서로 다른 프레임이 부족한 경우 `INSUFFICIENT_FRAMES`라는 보류 사유를 기록하고 JSON을 복사할 수 있습니다. `INSUFFICIENT_FRAMES`는 독립 시험 도구에서 쓰는 사유입니다.
+
+사진으로 누락을 확인할 때는 몸통의 위치와 가림 여부를 확인한 뒤 `RobotCamera.exe --inspect-images regions.json H1 L1 R2 image1.jpg image2.jpg image3.jpg --confirm-visible`을 실행합니다. 확인 옵션을 생략하면 검출되지 않은 부위는 판정 보류입니다.
+
 ## 검증
 
 `dotnet run --project tests/InspectionSmoke.csproj -c Release`는 모의 검출을 사용해 일치, 오장착, 누락, 확인 대기, 중복 프레임, 낮은 점수와 검출 불일치를 점검합니다.
 
-실제 검사 위치의 웹캠에서는 완성품과 한 부품을 뺀 제품을 각각 배치해 정상과 누락을 확인하고, 기대 코드가 다른 주문으로 오장착을 확인합니다. 이 도구의 주문 입력과 JSON은 독립 시험용이며, QR 판독 및 서버 이벤트 호출은 팀 연동 단계에서 연결합니다.
+실제 검사 위치의 웹캠에서는 완성품과 한 부품을 뺀 제품을 각각 배치해 정상과 누락을 확인하고, 기대 코드가 다른 주문으로 오장착을 확인합니다. 이 도구의 주문 입력과 JSON은 독립 시험용입니다. 촬영 시작 조건, 실제 주문·QR·검사 ID 매칭과 AGV 배송 연결은 [통합 이슈 #25](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/issues/25)에서 협의합니다.

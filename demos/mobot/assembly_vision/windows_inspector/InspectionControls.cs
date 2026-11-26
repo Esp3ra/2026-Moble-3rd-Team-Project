@@ -43,7 +43,16 @@ partial class CameraWindow
         {
             var box = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 64 };
             box.Items.AddRange(InspectionEngine.Choices[i]);
-            box.SelectedIndexChanged += delegate { UpdateInspectionControls(); };
+            box.SelectedIndexChanged += delegate {
+                if (request != null || lastResult != null)
+                {
+                    request = null;
+                    lastResult = null;
+                    inspectionStatus.Text = "주문 부품이 변경됐습니다. 다시 검사하세요.";
+                }
+                confirmed.Checked = false;
+                UpdateInspectionControls();
+            };
             partChoices[i] = box;
             row.Controls.Add(new Label { Text = InspectionEngine.SlotNames[i], AutoSize = true, Padding = new Padding(2, 7, 0, 0) });
             row.Controls.Add(box);
@@ -182,10 +191,7 @@ partial class CameraWindow
         if (request == null) return false;
         if ((DateTime.UtcNow - request.Started).TotalSeconds > 5)
         {
-            inspectionStatus.Text = "판정 보류 · 서로 다른 프레임 3장을 얻지 못했습니다.";
-            if (request.Frames.Count == 0) inspectionStatus.Text = "판정 보류 · 검사용 프레임이 없습니다.";
-            request = null;
-            UpdateInspectionControls();
+            FinishIncompleteCapture();
             return false;
         }
         return DateTime.UtcNow >= request.NextSample;
@@ -216,8 +222,19 @@ partial class CameraWindow
             if (response == DialogResult.Yes)
                 lastResult = InspectionEngine.Evaluate(current.Frames, current.Regions, current.Expected, names, true);
         }
+        FinishInspection(lastResult);
+    }
+
+    void FinishIncompleteCapture()
+    {
+        FinishInspection(InspectionEngine.CaptureFailure(request.Expected, request.Frames.Count));
+    }
+
+    void FinishInspection(InspectionResult result)
+    {
         request = null;
-        inspectionStatus.Text = DescribeInspection(lastResult);
+        lastResult = result;
+        inspectionStatus.Text = DescribeInspection(result);
         UpdateInspectionControls();
     }
 
@@ -230,6 +247,8 @@ partial class CameraWindow
     {
         if (result.verdict == "PASS") return "정상 · 머리와 양팔 일치";
         if (result.reasons.Contains("NO_FRAME")) return "판정 보류 · 검사용 프레임이 없습니다.";
+        if (result.reasons.Contains("INSUFFICIENT_FRAMES"))
+            return "판정 보류 · 서로 다른 프레임 3장을 얻지 못했습니다.";
         var messages = result.defects.Select(defect => SlotName(defect.slot) +
             (defect.reason == "PART_MISSING" ? " 누락" : " 오장착 (" + defect.expected_id + " → " + defect.observed_id + ")")
         ).ToList();

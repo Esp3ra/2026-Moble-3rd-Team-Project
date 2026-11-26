@@ -49,6 +49,16 @@ static class InspectionEngine
         }
     }
 
+    public static InspectionResult CaptureFailure(string[] expected, int frameCount)
+    {
+        var result = new InspectionResult(expected, frameCount) { verdict = "INDETERMINATE" };
+        var hold = frameCount == 0 ? ObservationHold.NoFrame : ObservationHold.InsufficientFrames;
+        result.reasons.Add(frameCount == 0 ? "NO_FRAME" : "INSUFFICIENT_FRAMES");
+        foreach (string slot in Slots)
+            result.observations.Add(slot, new PartObservation { observation = "UNKNOWN", Hold = hold });
+        return result;
+    }
+
     public static InspectionResult Evaluate(
         IList<InspectionFrame> frames, IList<RectangleF> regions, string[] expected,
         string[] classNames, bool visibilityConfirmed)
@@ -62,13 +72,12 @@ static class InspectionEngine
             throw new ArgumentException("프레임 크기와 식별값을 확인하세요.");
         bool enoughDistinctFrames =
             frames.Select(frame => frame.Fingerprint).Distinct().Count() >= MinimumFrames;
-        var result = new InspectionResult { frame_count = frames.Count };
+        var result = new InspectionResult(expected, frames.Count);
 
         for (int i = 0; i < Slots.Length; i++)
         {
             var region = regions[i];
             string slot = Slots[i];
-            result.expected.Add(slot, expected[i]);
             var evidence = frames.Select(frame => frame.Hits.Where(hit =>
                 region.Contains(
                     (hit.Box.Left + hit.Box.Width / 2) / frame.Size.Width,
@@ -164,6 +173,13 @@ sealed class PartDefect
 
 sealed class InspectionResult
 {
+    public InspectionResult(string[] expectedCodes, int frameCount)
+    {
+        frame_count = frameCount;
+        for (int i = 0; i < InspectionEngine.Slots.Length; i++)
+            expected.Add(InspectionEngine.Slots[i], expectedCodes[i]);
+    }
+
     public string verdict { get; set; }
     public int frame_count { get; set; }
     public readonly Dictionary<string, string> expected = new Dictionary<string, string>();
