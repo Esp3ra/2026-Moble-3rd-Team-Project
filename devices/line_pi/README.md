@@ -64,7 +64,7 @@ heartbeat 간격은 UNO의 HEARTBEAT_LIMIT_MS보다 짧고, serial_response_time
 
 직접 내부 HTTPS로 연결할 때 Pi의 `listen_host`를 VPN 주소로, `tls_certificate`·`tls_private_key`를 실제 인증서 파일로 설정합니다. 메인 PC가 인증서의 발급자를 신뢰해야 합니다. VPN 주소 대역이 기본 사설망 목록 밖이면 Pi와 메인 서버의 internal_networks에 해당 VPN 대역을 명시적으로 추가해야 합니다. Pi의 `server_url`도 내부 메인 서버의 HTTPS 주소로 지정합니다. 자체 서명 인증서를 무조건 무시하는 옵션은 제공하지 않습니다.
 
-SSH로 Pi에 접속할 수 있다면 메인 PC의 LINE 연결 설정을 완료한 뒤, 저장소의 demos/mobot 폴더에서 다음을 실행합니다. PI_SSH_ADDRESS를 Pi의 실제 주소로 바꾸고 이 창을 운전 중 유지합니다. Pi SSH 서버의 역방향 포트는 루프백에 바인딩합니다.
+SSH로 Pi에 접속할 수 있다면 메인 PC의 LINE 연결 설정을 완료한 뒤, 저장소의 server/mobot 폴더에서 다음을 실행합니다. PI_SSH_ADDRESS를 Pi의 실제 주소로 바꾸고 이 창을 운전 중 유지합니다. Pi SSH 서버의 역방향 포트는 루프백에 바인딩합니다.
 
 ~~~powershell
 .\scripts\Start-LINE-Tunnel.ps1 -Pi pi@PI_SSH_ADDRESS
@@ -82,7 +82,7 @@ PiApi는 Pi의 API 응답을, UnoOnline은 USB와 v1 시리얼 협상 상태를 
 
 ## 4. 메인 PC 설정
 
-Pi의 config.json을 안전한 경로로 메인 PC에 복사한 뒤 저장소의 demos/mobot 폴더에서 실행합니다. 이 파일은 인증키가 있으므로 저장소에 올리지 않습니다.
+Pi의 config.json을 안전한 경로로 메인 PC에 복사한 뒤 저장소의 server/mobot 폴더에서 실행합니다. 이 파일은 인증키가 있으므로 저장소에 올리지 않습니다.
 
 ```powershell
 & "$env:LOCALAPPDATA\MOBOT\.venv\Scripts\python.exe" scripts/configure_live_line.py --pi-config C:\PRIVATE\pi-config.json --line-url http://127.0.0.1:18101 --cameras 0 1 2 3
