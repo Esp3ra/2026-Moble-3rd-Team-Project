@@ -89,7 +89,7 @@ def command(data):
         else:pose_set(params)
     elif action in ('DELIVER','UNLOAD'):
         object_fields(params,('destination','inspection_id'))
-        require(type(params['destination']) is int and params['destination'] in (3,4,5,6,7),'목적지 오류')
+        require(type(params['destination']) is int and params['destination'] in (3,4,5),'목적지 오류')
         identifier(params['inspection_id'])
     elif action=='RESUME':
         object_fields(params,('pause_command_id',));identifier(params['pause_command_id'])
