@@ -1,0 +1,34 @@
+name: Windows inspector build and test
+on:
+  push:
+    paths:
+      - 'demos/mobot/assembly_vision/windows_inspector/**'
+      - '.github/workflows/windows-inspector-build.yml'
+  pull_request:
+    paths:
+      - 'demos/mobot/assembly_vision/windows_inspector/**'
+      - '.github/workflows/windows-inspector-build.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: demos/mobot/assembly_vision/windows_inspector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build the standalone inspector
+        shell: pwsh
+        run: |
+          $metadata = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\UnionMetadata\10.*\Windows.winmd" -File |
+            Sort-Object { [version]$_.Directory.Name } |
+            Select-Object -Last 1
+          if (-not $metadata) { throw 'Windows SDK metadata is unavailable.' }
+          dotnet build RobotCamera.csproj --configuration Release --nologo "-p:WindowsWinMd=$($metadata.FullName)"
+      - name: Run inspection rules smoke tests
+        run: dotnet run --project tests/InspectionSmoke.csproj --configuration Release

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <FrameworkRuntimeDir>$(WINDIR)\Microsoft.NET\Framework64\v4.0.30319</FrameworkRuntimeDir>
+    <WindowsWinMd Condition="'$(WindowsWinMd)' == ''">$(MSBuildProgramFiles32)\Windows Kits\10\UnionMetadata\10.0.26100.0\Windows.winmd</WindowsWinMd>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.4" />
+    <Reference Include="Windows">
+      <HintPath>$(WindowsWinMd)</HintPath>
+      <IsWinMDFile>true</IsWinMDFile>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Runtime.WindowsRuntime">
+      <HintPath>$(FrameworkRuntimeDir)\System.Runtime.WindowsRuntime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Runtime.InteropServices.WindowsRuntime">
+      <HintPath>$(FrameworkRuntimeDir)\System.Runtime.InteropServices.WindowsRuntime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Web.Extensions" />
+    <None Update="model\classes.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="model\best.onnx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="CheckWindowsMetadata" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(WindowsWinMd)')" Text="Install Windows SDK 10.0.26100.0 or pass -p:WindowsWinMd=path-to-Windows.winmd." />
+  </Target>
+</Project>
