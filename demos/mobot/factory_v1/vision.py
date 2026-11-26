@@ -21,12 +21,15 @@ class PcVision:
     def start(self):
         if self.simulation:return
         self.qr.start()
+        grouped={}
         for camera,index in self.config.get('camera_indices',{}).items():
-            if self.app.config['V1_MODE']=='TRANSPORT_TEST' and camera in ('cam2','cam3'):continue
             if camera in ('cam1','cam2','cam3','cam4') and type(index) is int:
-                threading.Thread(target=self.capture,args=(camera,index),daemon=True).start()
+                grouped.setdefault(index,[]).append(camera)
+        for index,cameras in grouped.items():
+            cameras.sort()
+            threading.Thread(target=self.capture,args=(cameras[0],index,tuple(cameras[1:])),daemon=True).start()
 
-    def capture(self,camera,index):
+    def capture(self,camera,index,aliases=()):
         while not self.closed.is_set():
             cap=cv2.VideoCapture(index,cv2.CAP_DSHOW) if __import__('os').name=='nt' else cv2.VideoCapture(index)
             try:
@@ -37,9 +40,12 @@ class PcVision:
                 # DirectShow renegotiates the format when FPS/size change. Apply codec last.
                 if profile.get('fourcc'):cap.set(cv2.CAP_PROP_FOURCC,cv2.VideoWriter_fourcc(*profile['fourcc']))
                 while not self.closed.is_set() and cap.isOpened():
+                    acquisition_started=time.monotonic()
                     ok,frame=cap.read()
                     if not ok:break
-                    with self.lock:self.frames[camera]=(time.monotonic(),frame.copy(),uid(),now())
+                    sample=(acquisition_started,frame.copy(),uid(),now())
+                    with self.lock:
+                        for name in (camera,*aliases):self.frames[name]=sample
                     if camera=='cam1':self.qr.capture_tick()
             finally:cap.release()
             self.closed.wait(1)
@@ -71,18 +77,28 @@ class PcVision:
 
     def ready(self):
         if self.simulation:return dict.fromkeys(('cam1','cam2','cam3','cam4'),True)
-        result={camera:self.frame_data(camera)[0] is not None for camera in ('cam1','cam2','cam3','cam4')}
+        with self.lock:
+            now_monotonic=time.monotonic()
+            return {camera:camera in self.frames and now_monotonic-self.frames[camera][0]<2
+                    for camera in ('cam1','cam2','cam3','cam4')}
+
+    def assembly_ready(self):
+        if self.simulation:return True
         profile=self.profile
         calibrated=profile.get('approved') is True and isinstance(profile.get('calibration_id'),str) and bool(profile.get('pose_max_age_ms')) and set(profile.get('bounds',{}))=={'x_mm','y_mm','z_mm','rx_deg','ry_deg','rz_deg'}
-        result['cam2']=result['cam2'] and bool(self.plugin and calibrated and hasattr(self.plugin,'locate_assembly'))
-        result['cam3']=result['cam3'] and bool(self.plugin and self.config.get('vision_profile_approved') is True and hasattr(self.plugin,'inspect_product'))
-        return result
+        return self.ready()['cam2'] and bool(self.plugin and calibrated and hasattr(self.plugin,'locate_assembly'))
 
-    def scan_test_qr(self):
-        require(not self.simulation,'실제 QR 시험에는 실물 카메라가 필요합니다.',409,'BAD_TRANSITION')
-        return self.qr.read_now()
+    @property
+    def inspection_camera(self):
+        camera=self.config.get('inspection_camera')
+        return 'cam3' if camera=='cam3' else None
 
-    def read_feed_qr(self,cycle,read_id,attempt):
+    def inspection_ready(self):
+        if self.simulation:return True
+        return bool(self.inspection_camera and self.plugin and self.config.get('vision_profile_approved') is True
+                    and hasattr(self.plugin,'inspect_product') and self.ready()[self.inspection_camera])
+
+    def read_feed_qr(self,cycle,read_id,attempt,sample=None):
         if self.simulation:
             if self.qr_inputs:pallet=self.qr_inputs.pop(0)
             else:
@@ -92,17 +108,35 @@ class PcVision:
             return dict(frame_id=uid(),pallet_id=pallet,attempt=attempt,read_id=read_id)
         # Process reads the current frame through the same ROI/CLAHE decoder.
         # Live preview results never trigger binding or motor commands.
-        result=self.qr.read_now()
+        result=self.qr.read_now(sample) if sample is not None else self.qr.read_now()
         return dict(frame_id=result['frame_id'],pallet_id=result['pallet_id'],attempt=attempt,read_id=read_id)
 
-    def locate_assembly(self,cycle,specification):
+    @property
+    def part_order(self):
+        if self.simulation:return ['HEAD','LEFT','RIGHT']
+        return self.profile.get('part_order') if self.profile.get('approved') is True else None
+
+    def process_frame(self,camera,after):
+        if self.simulation:return self.frame_data(camera)
+        with self.lock:
+            frame=self.frames.get(camera)
+            if frame and frame[0]>after and time.monotonic()-frame[0]<2:
+                return frame[1].copy(),frame[2],frame[3]
+        return None
+
+    def locate_assembly(self,cycle,specification,sample=None):
+        frame,frame_id,captured=sample if sample is not None else self.frame_data('cam2')
+        require(frame is not None,'CAM2 촬영 대기',503,'DEVICE_UNAVAILABLE')
         if self.simulation:
             pose=dict(frame='ROBOT_BASE',tool_frame='GRIP_CENTER',calibration_id='SIMULATION_ONLY',
-                      x_mm=0,y_mm=0,z_mm=0,rx_deg=0,ry_deg=0,rz_deg=0,captured_at=now())
+                      x_mm=0,y_mm=0,z_mm=0,rx_deg=0,ry_deg=0,rz_deg=0,captured_at=captured)
             return dict(spec=specification,points={k:pose.copy() for k in ('head_pick','head_place','left_pick','left_place','right_pick','right_place')})
-        require(self.ready()['cam2'],'승인된 좌표 보정과 카메라 2 준비가 필요합니다.',503,'DEVICE_UNAVAILABLE')
-        frame,frame_id,captured=self.frame_data('cam2')
-        return self.plugin.locate_assembly(cycle_id=cycle,spec=specification,calibration_id=self.profile['calibration_id'],camera_id='cam2',frame=frame,frame_id=frame_id,captured_at=captured)
+        require(self.assembly_ready(),'승인된 좌표 보정과 카메라 2 준비가 필요합니다.',503,'DEVICE_UNAVAILABLE')
+        poses=self.plugin.locate_assembly(cycle_id=cycle,spec=specification,calibration_id=self.profile['calibration_id'],camera_id='cam2',frame=frame,frame_id=frame_id,captured_at=captured)
+        from .contracts import pose_set
+        pose_set(poses)
+        require(poses['spec']==specification and all(p['captured_at']==captured for p in poses['points'].values()),'CAM2 주문 사양·프레임 시각 불일치',422,'STALE_CALIBRATION')
+        return poses
 
     def validate_poses(self,poses):
         if self.simulation:return
@@ -114,8 +148,10 @@ class PcVision:
             require(0<=age<=profile['pose_max_age_ms'],'좌표 유효 시간이 지났습니다.',422,'STALE_CALIBRATION')
             for key,limits in profile['bounds'].items():require(limits[0]<=pose[key]<=limits[1],'승인 작업 공간 밖의 좌표입니다.',422,'STALE_CALIBRATION')
 
-    def inspect_product(self,cycle,inspection,specification,pallet):
-        frame,frame_id,captured=self.frame_data('cam3')
+    def inspect_product(self,cycle,inspection,specification,pallet,sample=None):
+        camera=self.inspection_camera or ('cam3' if self.simulation else None)
+        if camera is None:return None
+        frame,frame_id,captured=sample if sample is not None else self.frame_data(camera)
         if frame is None:return None
         if self.simulation:
             data=dict(inspection_id=inspection,cycle_id=cycle,frame_id=frame_id,captured_at=captured,image_ref=uid(),model_version='SIMULATION_ONLY',calibration_id='SIMULATION_ONLY',qr_read=pallet,
@@ -124,8 +160,8 @@ class PcVision:
                 right=dict(observation='SEEN',observed_id=specification['target_arm_r_id'],confidence=1))
             if self.inspection_override:self.inspection_override(data)
         else:
-            require(self.ready()['cam3'],'승인된 비전 프로필이 필요합니다.',503,'DEVICE_UNAVAILABLE')
-            data=self.plugin.inspect_product(cycle_id=cycle,inspection_id=inspection,camera_id='cam3',frame=frame,frame_id=frame_id,captured_at=captured)
+            require(self.inspection_ready(),'승인된 검사 카메라와 비전 프로필이 필요합니다.',503,'DEVICE_UNAVAILABLE')
+            data=self.plugin.inspect_product(cycle_id=cycle,inspection_id=inspection,camera_id=camera,frame=frame,frame_id=frame_id,captured_at=captured)
         require(data['frame_id']==frame_id and data['captured_at']==captured,'동일 프레임 검사 결과가 아닙니다.',409,'CONFLICT')
         with self.lock:self.images[data['image_ref']]=cv2.imencode('.jpg',frame)[1].tobytes()
         return data

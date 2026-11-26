@@ -5,17 +5,41 @@ namespace RobotFactory.Admin.Views;
 public partial class DashboardView:UserControl
 {
  private Window? qrRoiWindow;
- public DashboardView(){InitializeComponent();Loaded+=async(_,_)=>{if(DataContext is DashboardViewModel m)await m.StartAsync();};Unloaded+=(_,_)=>{qrRoiWindow?.Close();Model?.Stop();};}
+ private QrRoiViewModel? qrViewer;
+ public DashboardView()
+ {
+  InitializeComponent();
+  Loaded+=async(_,_)=>{UpdateQrPreview();if(Model is {} m){m.CameraTabVisible=CameraGrid.IsVisible;await m.StartAsync();}};
+  Unloaded+=(_,_)=>{qrRoiWindow?.Close();ReleaseQrViewer();Model?.Stop();};
+ }
+ private void QrPreview_VisibilityChanged(object sender,DependencyPropertyChangedEventArgs e)=>UpdateQrPreview();
+ private void CameraGrid_VisibilityChanged(object sender,DependencyPropertyChangedEventArgs e)
+ {if(Model is {} model)model.CameraTabVisible=(bool)e.NewValue;}
+ private void UpdateQrPreview()
+ {
+  if(!IsLoaded || QrPreview is null)return;
+  if(!QrPreview.IsVisible && qrRoiWindow is null){ReleaseQrViewer();return;}
+  if(qrViewer is null && Model is {} model)
+  {
+   qrViewer=new QrRoiViewModel(new Uri(model.ServerAddress),model.AdminToken,model.ReportSessionExpired,canConfigure:model.IsSuperAdmin);
+   QrPreview.DataContext=qrViewer;
+   qrViewer.Start();
+  }
+ }
+ private void ReleaseQrViewer()
+ {
+  qrViewer?.Dispose();qrViewer=null;QrPreview.DataContext=null;
+ }
  private void QrRoi_Click(object s,RoutedEventArgs e)
  {
   if(qrRoiWindow is not null){qrRoiWindow.Activate();return;}
-  if(Model is not {} m)return;
-  var viewModel=new QrRoiViewModel(new Uri(m.ServerAddress),m.AdminToken,m.ReportSessionExpired);
-  qrRoiWindow=new Window{Title="CAM 01 · 실시간 QR ROI",Width=1800,Height=1000,WindowState=WindowState.Maximized,Owner=Window.GetWindow(this),Content=new QrRoiView{DataContext=viewModel}};
-  qrRoiWindow.Closed+=(_,_)=>{viewModel.Dispose();qrRoiWindow=null;};qrRoiWindow.Show();
+  UpdateQrPreview();
+  if(qrViewer is null)return;
+  qrRoiWindow=new Window{Title="CAM 01 · 실시간 QR ROI",WindowState=WindowState.Maximized,WindowStartupLocation=WindowStartupLocation.CenterOwner,Owner=Window.GetWindow(this),Content=new QrRoiView{DataContext=qrViewer}};
+  qrRoiWindow.ContentRendered+=MainWindow.FitFirstRestore;
+  qrRoiWindow.Closed+=(_,_)=>{qrRoiWindow=null;UpdateQrPreview();};qrRoiWindow.Show();
  }
  private DashboardViewModel? Model=>DataContext as DashboardViewModel;
- private async void Wireless_Click(object s,RoutedEventArgs e){if(Model is {} m && s is Button{Tag:string action})await m.WirelessActionAsync(action);}
  private async void Reconcile_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.ReconcileAsync();}
  private async void Image_Click(object s,RoutedEventArgs e){if(Model is {} m && await m.InspectionImageAsync() is {} image)new Window{Title="보관 검사 사진",Width=900,Height=700,Owner=Window.GetWindow(this),Content=new Image{Source=image,Stretch=System.Windows.Media.Stretch.Uniform}}.Show();}
  private async void DeleteImage_Click(object s,RoutedEventArgs e){if(Model is {} m && MessageBox.Show(Window.GetWindow(this),"선택한 보관 검사 사진을 삭제할까요?","사진 삭제",MessageBoxButton.YesNo)==MessageBoxResult.Yes)await m.DeleteImageAsync();}

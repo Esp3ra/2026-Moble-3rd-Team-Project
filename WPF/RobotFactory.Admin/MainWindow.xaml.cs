@@ -13,7 +13,29 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        ContentRendered += FitFirstRestore;
         DataContext = new MainViewModel();
+    }
+
+    internal static void FitFirstRestore(object? sender, EventArgs args)
+    {
+        if (sender is not Window window) return;
+        window.ContentRendered -= FitFirstRestore;
+        if (window.WindowState != WindowState.Maximized ||
+            PresentationSource.FromVisual(window)?.CompositionTarget is not { } target) return;
+        var handle = new WindowInteropHelper(window).Handle;
+        if (!GetClientRect(handle, out var client) || !GetWindowRect(handle, out var outer) ||
+            client.Right <= 0 || client.Bottom <= 0) return;
+
+        // Use this monitor's maximized client area and DPI for the initial restore position.
+        var toDip = target.TransformFromDevice;
+        var origin = toDip.Transform(window.PointToScreen(new Point(0, 0)));
+        var area = toDip.Transform(new Vector(client.Right, client.Bottom));
+        var chrome = toDip.Transform(new Vector(outer.Right - outer.Left - client.Right, outer.Bottom - outer.Top - client.Bottom));
+        window.Width = Math.Round(area.X * .8 + chrome.X);
+        window.Height = Math.Round(area.Y * .8 + chrome.Y);
+        window.Left = origin.X + (area.X - window.Width) / 2;
+        window.Top = origin.Y + (area.Y - window.Height) / 2;
     }
     private async void Logout_Click(object sender, RoutedEventArgs e)
     {

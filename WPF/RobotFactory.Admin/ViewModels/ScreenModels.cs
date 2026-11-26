@@ -14,6 +14,8 @@ public sealed class LoginViewModel : INotifyPropertyChanged
     private string status = "아이디와 비밀번호로 로그인하세요.";
     public string ServerAddress { get; set; } = Environment.GetEnvironmentVariable("MOBOT_API_URL") ?? "http://127.0.0.1:8000";
     public string LoginId { get; set; } = "";
+    public bool ConveyorTrial { get; set; }
+    internal bool LoggedInForTrial { get; private set; }
     public bool CanSubmit => !busy;
     public string Status { get => status; private set { status = value; Notify(); } }
     public event Action<Uri, AdminSession>? LoggedIn;
@@ -21,13 +23,16 @@ public sealed class LoginViewModel : INotifyPropertyChanged
     private void Notify([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new(name));
     public void SetStatus(string message) => Status = message;
 
-    public async Task LoginAsync(string password)
+    public Task LoginAsync(string password) => LoginAsync(password, fromScreen: false);
+
+    internal Task LoginFromScreenAsync(string password) => LoginAsync(password, fromScreen: true);
+
+    private async Task LoginAsync(string password, bool fromScreen)
     {
         if (busy) return;
-        if (!Uri.TryCreate(ServerAddress, UriKind.Absolute, out var server) ||
-            (server.Scheme != "http" && server.Scheme != "https") || !string.IsNullOrEmpty(server.UserInfo))
+        if (!ApiConnection.TryParseAddress(ServerAddress, out var server))
         {
-            Status = "http 또는 https 서버 주소를 입력하세요.";
+            Status = ApiConnection.AddressHint;
             return;
         }
         if (string.IsNullOrWhiteSpace(LoginId) || string.IsNullOrEmpty(password))
@@ -40,7 +45,11 @@ public sealed class LoginViewModel : INotifyPropertyChanged
         Status = "로그인 확인 중";
         try
         {
-            var session = await api.LoginAsync(server, LoginId.Trim(), password);
+            var trial = fromScreen && ConveyorTrial;
+            var session = fromScreen
+                ? await api.LoginFromScreenAsync(server, LoginId.Trim(), password, trial)
+                : await api.LoginAsync(server, LoginId.Trim(), password);
+            LoggedInForTrial = trial;
             Status = "로그인했습니다.";
             LoggedIn?.Invoke(server, session);
         }
@@ -63,7 +72,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public object CurrentView { get => currentView; private set { currentView = value; OnPropertyChanged(); } }
     public bool IsLoggedIn => session is not null;
     public bool IsLoggedOut => !IsLoggedIn;
-    public string SessionDisplay => session is null ? "관리자 로그인이 필요합니다." : $"{session.Account.DisplayName} · {session.Account.DisplayRole}";
+    public string SessionDisplay => session is null ? "관리자 로그인이 필요합니다." :
+        $"{session.Account.DisplayName} · {session.Account.DisplayRole}" + (dashboard?.IsConveyorTrial == true ? " · 컨베이어 시험" : "");
     public ICommand ShowDashboardCommand { get; }
     public ICommand ShowLoginCommand { get; }
     public MainViewModel()
@@ -77,7 +87,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         session = authenticated;
         server = address;
-        dashboard = new DashboardViewModel { ServerAddress = address.ToString(), AdminToken = authenticated.Token, IsSuperAdmin = authenticated.Account.Role == "SUPER_ADMIN" };
+        dashboard = new DashboardViewModel { ServerAddress = address.ToString(), AdminToken = authenticated.Token,
+            IsSuperAdmin = authenticated.Account.Role == "SUPER_ADMIN", IsConveyorTrial = login.LoggedInForTrial };
         dashboard.SessionExpired += () => EndSession("로그인이 해제되었거나 권한이 변경되었습니다. 다시 로그인하세요.");
         CurrentView = dashboard;
         NotifySession();

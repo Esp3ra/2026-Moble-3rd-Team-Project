@@ -4,14 +4,12 @@ from pathlib import Path
 from string import Template
 
 from flask import Flask, abort, redirect, request
-from waitress import serve
+from waitress import create_server
 
-from orders import BANKS, CARD_ISSUERS, HEAD_CODES, LEFT_CODES, RIGHT_CODES, connect, create_order_api, initialize_orders
-from auth import create_auth_api
-from equipment import create_equipment_api
-from agv import create_agv_api
-from remote_equipment import create_device_api
-import json
+from orders import BANKS, CARD_ISSUERS, HEAD_CODES, LEFT_CODES, RIGHT_CODES
+from factory_v1.runtime import install
+from server_paths import instance_directory
+from device_connections import start_transports
 
 
 ROOT = Path(__file__).resolve().parent
@@ -149,44 +147,15 @@ def render(path, *, live=False):
 def create_app():
     app = Flask(__name__)
     app.config.update(
-        ORDER_DB=Path(os.environ.get("MOBOT_DB", ROOT / "instance" / "mobot.sqlite3")),
-        ADMIN_TOKEN=os.environ.get("MOBOT_ADMIN_TOKEN", ""),
+        ORDER_DB=Path(os.environ.get("MOBOT_DB", instance_directory() / "mobot.sqlite3")).resolve(),
         MAX_CONTENT_LENGTH=8192,
-        UNO_DEMO_ROOT=ROOT / 'instance' / 'uno-demo',
-        UNO_DEMO_QRS=ROOT / 'pallet_qrs',
-        EQUIPMENT_MODE='DEMO',
-        REMOTE_DEVICE_ID='uno-pi',
     )
-    settings=app.config['ORDER_DB'].parent/'remote-equipment.json'
-    if settings.exists():
-        config=json.loads(settings.read_text(encoding='utf-8'))
-        app.config.update(EQUIPMENT_MODE=config.get('mode','DEMO'),REMOTE_DEVICE_ID=config.get('device_id','uno-pi'))
-    app.config['EQUIPMENT_MODE']=os.environ.get('MOBOT_EQUIPMENT_MODE',app.config['EQUIPMENT_MODE'])
-    if app.config['EQUIPMENT_MODE'] not in {'DEMO','REMOTE'}:raise ValueError('MOBOT_EQUIPMENT_MODE는 DEMO 또는 REMOTE여야 합니다.')
-    initialize_orders(app.config["ORDER_DB"])
-    app.register_blueprint(create_order_api(HEADS, ARMS))
-    app.register_blueprint(create_auth_api(connect))
-    app.register_blueprint(create_equipment_api())
-    app.register_blueprint(create_agv_api())
-    app.register_blueprint(create_device_api())
-    from factory_v1.runtime import install
-    app.config['LEGACY_API_ENABLED']=os.environ.get('MOBOT_LEGACY_API_ENABLED','0')=='1'
     install(app)
-    from wireless_control import install as install_wireless_test
-    install_wireless_test(app)
-
-    @app.before_request
-    def limits():
-        request.max_content_length = 512000 if request.endpoint=='devices.frame' else (65536 if request.endpoint=='devices.poll' else 8192)
 
     @app.route("/")
     @app.route("/order")
     def page():
-        page=render(request.path, live=True)
-        if app.config['V1_MODE']=='TRANSPORT_TEST':
-            banner='<aside role="alert" style="padding:16px;background:#fff0c2;color:#733800;text-align:center;font-weight:bold">운송 시험 전용 · 로봇팔 조립·YOLO 검사 생략 · 시험 DB 사용 · 제품 합격 판정 없음</aside>'
-            page=page.replace('<main id="main"',banner+'<main id="main"',1)
-        return page
+        return render(request.path, live=True)
 
     @app.get("/<section>")
     def section_redirect(section):
@@ -198,12 +167,28 @@ def create_app():
     return app
 
 
-if __name__ == "__main__":
-    app = create_app()
+def main():
     host = os.environ.get("MOBOT_HOST", "127.0.0.1")
     port = int(os.environ.get("MOBOT_PORT", "8000"))
-    print(f"MOBOT  http://{host}:{port}", flush=True)
-    serve(app, host=host, port=port, threads=8, connection_limit=512,
-          channel_timeout=15, cleanup_interval=5, max_request_body_size=512000,
-          trusted_proxy="127.0.0.1", trusted_proxy_count=1,
-          trusted_proxy_headers={"x-forwarded-for"})
+
+    def application(environ, start_response):
+        return app(environ, start_response)
+
+    # Bind first. A port collision must not migrate or acquire the other server's DB.
+    server = create_server(application, host=host, port=port, threads=8, connection_limit=512,
+                           channel_timeout=15, cleanup_interval=5, max_request_body_size=8192,
+                           trusted_proxy="127.0.0.1", trusted_proxy_count=1,
+                           trusted_proxy_headers={"x-forwarded-for"})
+    try:
+        app = create_app()
+        settings = app.config['V1_SETTINGS'].get('devices', {}) if app.config['V1_MODE']=='HARDWARE' else {}
+        with start_transports(settings):
+            app.extensions['mobot_start']()
+            print(f"MOBOT  http://{host}:{port}", flush=True)
+            server.run()
+    finally:
+        server.close()
+
+
+if __name__ == "__main__":
+    main()

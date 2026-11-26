@@ -8,7 +8,7 @@ from unittest.mock import patch
 from werkzeug.security import generate_password_hash
 from app import create_app
 from orders import connect
-from factory_v1.common import uid,dump,now
+from factory_v1.common import Fault,uid,dump,now
 from factory_v1.devices import SimDevice
 
 HASH=generate_password_hash('test')
@@ -50,6 +50,23 @@ class FactoryTests(unittest.TestCase):
         result=self.client.post('/api/v1/plant/actions',json={'request_id':uid(),'action':'START'},headers=self.auth)
         self.assertEqual(result.status_code,202,result.json)
         return result.json
+
+    def test_production_has_only_standard_api_and_cannot_be_reused_by_simulation(self):
+        live_path=self.path.with_name('live.sqlite3')
+        options={'MOBOT_DB':str(live_path),'MOBOT_V1_MODE':'HARDWARE',
+                 'MOBOT_V1_BACKGROUND':'0','MOBOT_LEGACY_API_ENABLED':'1'}
+        with patch.dict(os.environ,options):
+            live=create_app()
+        self.addCleanup(live.extensions['factory_v1'].close)
+        client=live.test_client()
+        self.assertEqual(client.get('/api/v1/catalog').status_code,200)
+        self.assertEqual(client.post('/api/orders',json={}).status_code,410)
+        self.assertEqual(client.get('/api/v1/wireless-test/status').status_code,404)
+        self.assertEqual(client.get('/device/v1/status').status_code,404)
+        options['MOBOT_V1_MODE']='SIMULATION'
+        with patch.dict(os.environ,options), self.assertRaises(Fault) as raised:
+            create_app()
+        self.assertEqual(raised.exception.status,409)
 
     def test_stock_shared_and_public_privacy(self):
         order,_=self.order()
@@ -106,7 +123,7 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual(result['dispatch_station'],3)
         with closing(connect(self.path)) as db:
             actions=[r[0] for r in db.execute('SELECT action FROM V1_COMMANDS ORDER BY rowid')]
-            self.assertEqual(actions,['DISPENSE','MOVE_TO_ASSEMBLY','ASSEMBLE','MOVE_TO_PICKUP','PICK_UP','GO_TO_INSPECTION','DELIVER','UNLOAD','RETURN_STANDBY'])
+            self.assertEqual(actions,['DISPENSE','MOVE_TO_ASSEMBLY','ASSEMBLE','MOVE_TO_PICKUP','PICK_UP','DELIVER','UNLOAD','RETURN_STANDBY'])
             self.assertEqual(db.execute('SELECT count(*) FROM V1_INSPECTIONS').fetchone()[0],1)
             self.assertEqual(db.execute("SELECT stage FROM V1_PALLETS WHERE pallet_id=?",(result['pallet_id'],)).fetchone()[0],'AWAIT_MANUAL_RETURN')
             self.assertFalse(db.execute('PRAGMA foreign_key_check').fetchall())
@@ -120,13 +137,84 @@ class FactoryTests(unittest.TestCase):
         self.tick(100)
         with closing(connect(self.path)) as db:self.assertEqual([r[0] for r in db.execute('SELECT order_id FROM V1_CYCLES ORDER BY rowid')],[b['order_id'],a['order_id']])
 
+    def test_refresh_capability_required_before_dispense(self):
+        arm=self.engine.clients['ARM']
+        status=arm.status()
+        del status['capabilities']
+        with patch.object(arm,'status',return_value=status):
+            self.tick()
+            order,_=self.order()
+            self.accept(order)
+            response=self.client.post('/api/v1/plant/actions',json=dict(request_id=uid(),action='START'),headers=self.auth)
+            self.assertEqual(response.status_code,503)
+            with closing(connect(self.path)) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM V1_COMMANDS').fetchone()[0],0)
+
+    def test_checkpoint_waits_for_new_frame_and_lost_reply_reuses_body(self):
+        arm=self.engine.clients['ARM']
+        order,_=self.order()
+        self.accept(order)
+        self.start()
+        with patch.object(self.engine.vision,'process_frame',return_value=None):
+            self.tick(30)
+            with closing(connect(self.path)) as db:
+                self.assertEqual(db.execute('SELECT state,part FROM V1_ARM_CHECKPOINTS').fetchone()[:],('WAIT_FRAME','LEFT'))
+                self.assertFalse(db.execute("SELECT 1 FROM V1_COMMANDS WHERE action='MOVE_TO_PICKUP'").fetchone())
+        send=arm.placement
+        attempts=[]
+        def lose_first_ack(command,key,body,boot):
+            attempts.append((command,key,dump(body),boot))
+            send(command,key,body,boot)
+            if len(attempts)==1:raise TimeoutError('simulated lost 204')
+        with patch.object(arm,'placement',side_effect=lose_first_ack):
+            self.tick(60)
+        self.assertEqual(attempts[0],attempts[1])
+        self.assertEqual(len(arm.placements),2)
+        with closing(connect(self.path)) as db:
+            rows=db.execute('SELECT part,state FROM V1_ARM_CHECKPOINTS ORDER BY rowid').fetchall()
+            self.assertEqual([r[:] for r in rows],[('LEFT','ACCEPTED'),('RIGHT','ACCEPTED')])
+            self.assertEqual(db.execute('SELECT factory_status FROM V1_ORDERS').fetchone()[0],'COMPLETED')
+
+    def test_standby_without_both_placements_holds_belt(self):
+        order,_=self.order()
+        self.accept(order)
+        self.start()
+        arm=self.engine.clients['ARM']
+        while not arm.active and self.now<120:self.tick()
+        self.assertIsNotNone(arm.active)
+        arm.emit(arm.active,'ARM_STANDBY_AFTER_ASSEMBLY',dict(standby_verified=True,assembly_steps_verified=True))
+        arm.active=None
+        self.tick()
+        with closing(connect(self.path)) as db:
+            self.assertEqual(db.execute('SELECT state FROM V1_PLANT').fetchone()[0],'RECOVERY_REQUIRED')
+            self.assertFalse(db.execute("SELECT 1 FROM V1_COMMANDS WHERE action='MOVE_TO_PICKUP'").fetchone())
+
+    def test_rejected_agv_pickup_cannot_start_delivery(self):
+        from factory_v1.common import Fault
+        agv=self.engine.clients['AGV']
+        submit=agv.submit
+        def reject_pickup(data,boot):
+            if data['action']=='PICK_UP':
+                raise Fault(422,'UNSUPPORTED_VERSION','인수 명령 미지원')
+            return submit(data,boot)
+        order,_=self.order()
+        self.accept(order)
+        self.start()
+        with patch.object(agv,'submit',side_effect=reject_pickup):
+            self.tick(45)
+        with closing(connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT state FROM V1_COMMANDS WHERE action='PICK_UP'").fetchone()[0],'FAILED')
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action IN ('DELIVER','UNLOAD')").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_INSPECTIONS WHERE json_extract(body,'$.verdict')='PASS'").fetchone()[0],1)
+            self.assertEqual(db.execute('SELECT state FROM V1_PLANT').fetchone()[0],'RECOVERY_REQUIRED')
+
     def test_three_qr_failures_then_same_pallet_retry(self):
         self.engine.vision.qr_inputs=[None,None,None,'PALLET-03']
         order,_=self.order();self.accept(order);self.start();self.tick(30)
         plant=self.client.get('/api/v1/plant',headers=self.auth).json
         self.assertEqual(plant['stage'],'WAIT_FEED_QR')
         self.assertEqual(plant['feed_qr']['state'],'UNREADABLE')
-        with closing(connect(self.path)) as db:self.assertEqual([r[0] for r in db.execute('SELECT action FROM V1_COMMANDS')],['DISPENSE'])
+        with closing(connect(self.path)) as db:self.assertEqual([r[0] for r in db.execute('SELECT action FROM V1_COMMANDS')],['DISPENSE','MOVE_TO_ASSEMBLY'])
         retry=self.client.post('/api/v1/cycles/'+plant['cycle_id']+'/qr-retry',json=dict(request_id=uid(),action='READ_QR',previous_read_id=plant['feed_qr']['read_id']),headers=self.auth)
         self.assertEqual(retry.status_code,202,retry.json)
         self.tick(80)
@@ -153,7 +241,10 @@ class FactoryTests(unittest.TestCase):
         self.engine.vision.inspection_override=alter
         order,_=self.order();self.accept(order);self.start();self.tick(90)
         result=self.client.get('/api/v1/orders/'+order['order_id'],headers=self.auth).json
-        self.assertEqual((result['factory_status'],result['dispatch_station']),('ERROR_DELIVERED',6))
+        self.assertEqual((result['factory_status'],result['dispatch_station']),('IN_PROGRESS',None))
+        with closing(connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT json_extract(body,'$.verdict') FROM V1_INSPECTIONS").fetchone()[0],'PART_MISSING')
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='MOVE_TO_PICKUP' OR device_id='AGV'").fetchone()[0],0)
 
     def test_roles_session_and_external_control_denied(self):
         self.assertEqual(self.client.get('/api/v1/accounts',headers=self.auth).status_code,403)
@@ -198,7 +289,7 @@ class FactoryTests(unittest.TestCase):
 
     def test_duplicate_and_conflicting_events(self):
         order,_=self.order();self.accept(order);self.start();self.tick(80)
-        client=self.engine.clients['AGV'];event=next(e for e in client.log if e['kind']=='INSPECTION_ARRIVED')
+        client=self.engine.clients['AGV'];event=next(e for e in client.log if e['kind']=='LIFT_FINISHED')
         headers={'Authorization':'Bearer agv-test'}
         result=self.client.post('/api/v1/device-events',json=event,headers=headers)
         self.assertEqual(result.json['disposition'],'DUPLICATE')
@@ -236,15 +327,86 @@ class FactoryTests(unittest.TestCase):
         for _ in range(2):self.assertEqual(self.client.post(url,json=data,headers=self.super_auth).status_code,200)
         self.assertEqual(self.client.get('/api/v1/inspections/'+inspection['inspection_id']+'/image',headers=self.auth).status_code,404)
 
-    def test_no_frame_goes_to_error_two_without_fake_image(self):
+    def test_no_frame_holds_the_belt_without_fake_image(self):
         order,_=self.order();self.accept(order);self.start()
         with patch.object(self.engine.vision,'inspect_product',return_value=None):self.tick(80)
         with closing(connect(self.path)) as db:
             row=db.execute('SELECT * FROM V1_INSPECTIONS').fetchone()
             result=__import__('json').loads(row['body'])
-            self.assertEqual((result['verdict'],result['dispatch_station']),('INDETERMINATE',7))
+            self.assertEqual((result['verdict'],result['dispatch_station']),('INDETERMINATE',None))
             self.assertEqual(result['reasons'],['NO_FRAME'])
             self.assertIsNone(row['image']);self.assertIsNone(result['image_ref'])
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='MOVE_TO_PICKUP' OR device_id='AGV'").fetchone()[0],0)
+
+    def test_rework_keeps_separate_attempts_and_only_a_saved_pass_enables_pickup(self):
+        observations=[]
+        def inspect(data):
+            data['qr_read']=None  # CAM1 binding stays authoritative when inspection has no QR.
+            if not observations:
+                data['head']=dict(observation='MISSING',observed_id=None,confidence=None)
+            observations.append(data['inspection_id'])
+        self.engine.vision.inspection_override=inspect
+        order,_=self.order();self.accept(order);self.start();self.tick(100)
+        with closing(connect(self.path)) as db:
+            rows=db.execute("SELECT * FROM V1_INSPECTIONS ORDER BY attempt_number").fetchall()
+            self.assertEqual(len(rows),2)
+            first,second=rows
+            self.assertEqual(first['cycle_id'],second['cycle_id'])
+            self.assertEqual(second['previous_inspection_id'],first['inspection_id'])
+            self.assertEqual(second['rework_command_id'],second['source_command_id'])
+            self.assertEqual([__import__('json').loads(row['body'])['verdict'] for row in rows],['PART_MISSING','PASS'])
+            delivery=__import__('json').loads(db.execute("SELECT params FROM V1_COMMANDS WHERE action='DELIVER'").fetchone()[0])
+            self.assertEqual(delivery['inspection_id'],second['inspection_id'])
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='MOVE_TO_PICKUP'").fetchone()[0],1)
+
+    def test_inspection_write_failure_blocks_pickup(self):
+        with closing(connect(self.path)) as db,db:
+            db.execute("""CREATE TRIGGER fail_verdict BEFORE UPDATE OF body ON V1_INSPECTIONS
+                       BEGIN SELECT RAISE(ABORT,'injected write error'); END""")
+        order,_=self.order();self.accept(order);self.start();self.tick(80)
+        with closing(connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_INSPECTIONS WHERE body IS NOT NULL").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='MOVE_TO_PICKUP' OR device_id='AGV'").fetchone()[0],0)
+            self.assertEqual(db.execute("SELECT state FROM V1_PLANT").fetchone()[0],'RECOVERY_REQUIRED')
+
+    def test_late_pass_from_previous_attempt_cannot_unlock_current_inspection(self):
+        import json
+        calls=[]
+        def inspect(data):
+            if not calls:
+                data['head']=dict(observation='MISSING',observed_id=None,confidence=None)
+            calls.append(data['inspection_id'])
+        self.engine.vision.inspection_override=inspect
+        order,_=self.order();self.accept(order);self.start()
+        original_record=self.engine.record
+        def divert_second(event):
+            if event['kind']=='INSPECTION_CAPTURED' and len(calls)==2:
+                event={**event,'data':{**event['data'],'inspection_id':calls[0]}}
+                result=original_record(event)
+                self.assertEqual(result['disposition'],'HELD_FOR_REVIEW')
+                return result
+            return original_record(event)
+        with patch.object(self.engine,'record',side_effect=divert_second):
+            self.tick(90)
+        with closing(connect(self.path)) as db:
+            rows=db.execute("SELECT body FROM V1_INSPECTIONS ORDER BY attempt_number").fetchall()
+            self.assertEqual([json.loads(rows[0][0])['verdict'],rows[1][0]],['PART_MISSING',None])
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='MOVE_TO_PICKUP' OR device_id='AGV'").fetchone()[0],0)
+
+    def test_migration_preserves_previous_inspection_body_image_and_archive(self):
+        from factory_v1.common import initialize
+        before=(uid(),uid(),uid(),dump(dict(verdict='PART_MISSING',dispatch_station=6)),dump(dict(qr_read=None)),b'jpeg',uid())
+        with closing(connect(self.path)) as db,db:
+            db.execute("DROP TABLE V1_INSPECTIONS")
+            db.execute("""CREATE TABLE V1_INSPECTIONS(inspection_id TEXT PRIMARY KEY, cycle_id TEXT NOT NULL UNIQUE,
+                order_id TEXT NOT NULL, body TEXT, vision TEXT, image BLOB, archive_id TEXT UNIQUE)""")
+            db.execute("INSERT INTO V1_INSPECTIONS VALUES(?,?,?,?,?,?,?)",before)
+        initialize(self.path)
+        initialize(self.path)
+        with closing(connect(self.path)) as db:
+            row=db.execute("SELECT inspection_id,cycle_id,order_id,body,vision,image,archive_id,attempt_number FROM V1_INSPECTIONS").fetchone()
+            self.assertEqual(tuple(row),(*before,1))
+            self.assertFalse(db.execute('PRAGMA foreign_key_check').fetchall())
 
     def test_controller_lease_and_unapproved_profiles(self):
         from factory_v1.engine import Engine
@@ -266,15 +428,17 @@ class FactoryTests(unittest.TestCase):
             response=self.client.post('/api/v1/accounts',json=data,headers=self.super_auth)
             self.assertEqual(response.status_code,201 if length<=128 else 400,response.json)
             if length<=128:
-                self.assertEqual(response.json['display_name'],data['display_name'])
+                self.assertEqual(response.json['display_name'],data['display_name'][:100])
                 replay=self.client.post('/api/v1/accounts',json=data,headers=self.super_auth)
                 self.assertEqual(replay.status_code,200)
                 self.assertEqual(replay.json,response.json)
                 token=self.client.post('/api/v1/auth/login',json={'login_id':data['login_id'],'password':data['initial_password']}).json['token']
                 account=self.client.get('/api/v1/auth/me',headers={'Authorization':'Bearer '+token})
-                self.assertEqual(account.json['display_name'],data['display_name'])
+                self.assertEqual(account.json['display_name'],data['display_name'][:100])
         accounts=self.client.get('/api/v1/accounts?limit=100',headers=self.super_auth).json['accounts']
-        self.assertTrue(any(a['display_name']=='가'*128 for a in accounts))
+        self.assertTrue(all(len(a['display_name'])<=100 for a in accounts))
+        with closing(connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT name FROM ACCOUNTS WHERE login_id='name-128'").fetchone()[0],'가'*128)
 
     def test_role_change_revokes_session_and_account_request_does_not_store_password(self):
         data=dict(request_id=uid(),login_id='new-user',display_name='새 계정',role='ADMIN',initial_password='unique-test-password')

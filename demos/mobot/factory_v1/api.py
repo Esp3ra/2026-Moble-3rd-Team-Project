@@ -1,7 +1,7 @@
 from flask import Blueprint,Response,jsonify
 from werkzeug.security import generate_password_hash
 from .common import *
-from .account_policy import ACCOUNT_DISPLAY_NAME_MAX
+from .account_policy import ACCOUNT_DISPLAY_NAME_MAX,account_view
 
 
 def client_address():
@@ -63,7 +63,7 @@ def create_api():
     @api.after_request
     def headers(response):
         response.headers['Cache-Control']='no-store'
-        response.headers['X-Mobot-Contract']='0.1.0'
+        response.headers['X-Mobot-Contract']='0.3.0'
         response.headers['X-Mobot-Environment']=current_app.config['V1_MODE']
         return response
 
@@ -325,7 +325,7 @@ def create_api():
         scope='account:create:'+g.account['account_id']
         with transaction() as db:
             prior=cached(db,scope,data['request_id'],data)
-            if prior:return prior[0],200
+            if prior:return account_view(prior[0]),200
             require(not db.execute('SELECT 1 FROM ACCOUNTS WHERE login_id=?',(data['login_id'],)).fetchone(),'이미 있는 아이디입니다.',409,'CONFLICT')
             role='ADMIN' if data['role']=='SUPER_ADMIN' else 'OPERATOR'
             role_id=db.execute('SELECT role_id FROM ROLES WHERE role_code=?',(role,)).fetchone()[0]
@@ -340,7 +340,7 @@ def create_api():
         scope='account:role:'+g.account['account_id'];payload=dict(account_id=account_id,**data)
         with transaction() as db:
             prior=cached(db,scope,data['request_id'],payload)
-            if prior:return prior
+            if prior:return account_view(prior[0]),prior[1]
             row=db.execute(ACCOUNT_SELECT+' WHERE a.account_id=?',(account_id,)).fetchone()
             require(row is not None,'계정이 없습니다.',404,'NOT_FOUND')
             if row['role_code']=='ADMIN' and data['role']=='ADMIN':

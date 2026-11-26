@@ -17,6 +17,7 @@ from werkzeug.security import check_password_hash
 from werkzeug.security import generate_password_hash
 from auth import bearer_token,token_hash,ACCOUNT_SELECT as LEGACY_ACCOUNT_SELECT,DUMMY_HASH
 from orders import connect
+from .account_policy import account_view
 
 SPEC={'target_head_id':('H1','H2'),'target_arm_l_id':('L1','L2','L3'),'target_arm_r_id':('R1','R2','R3')}
 ACCOUNT_SELECT=LEGACY_ACCOUNT_SELECT.replace('SELECT a.account_id,','SELECT a.account_id, a.role_id,')
@@ -80,8 +81,11 @@ def transaction():
 
 
 def initialize(path):
+    from .inspections import migrate
     with closing(connect(path)) as db, db:
         db.executescript(Path(__file__).with_name('schema.sql').read_text(encoding='utf-8'))
+        db.execute('BEGIN IMMEDIATE')
+        migrate(db)
         db.execute('INSERT OR IGNORE INTO V1_PLANT(id,updated_at) VALUES(1,?)',(now(),))
         for row in db.execute('SELECT pallet_id,current_status FROM PALLETS').fetchall():
             db.execute('INSERT OR IGNORE INTO V1_PALLETS(pallet_id,stage,updated_at) VALUES(?,?,?)',
@@ -94,7 +98,7 @@ def initialize(path):
 
 
 def account(row):
-    return dict(account_id=str(row['account_id']),role='SUPER_ADMIN' if row['role_code']=='ADMIN' else 'ADMIN',display_name=row['name'])
+    return account_view(dict(account_id=str(row['account_id']),role='SUPER_ADMIN' if row['role_code']=='ADMIN' else 'ADMIN',display_name=row['name']))
 
 
 def admin(super_only=False):

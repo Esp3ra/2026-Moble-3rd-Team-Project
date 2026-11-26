@@ -35,5 +35,15 @@ class CameraPerformanceTests(unittest.TestCase):
             source[0]=(frame,'frame-two','2026-11-21T00:00:00.012Z');vision.jpeg('cam1');self.assertEqual(encode.call_count,2)
             source[0]=(None,None,None);self.assertEqual(vision.jpeg('cam1'),(None,None));self.assertEqual(encode.call_count,2)
 
+    def test_station_arrival_excludes_even_a_recent_prearrival_frame(self):
+        vision=self.vision()
+        image=np.zeros((12,16,3),np.uint8)
+        for cam in ('cam1','cam2','cam3'):
+            with patch('factory_v1.vision.time.monotonic',return_value=20.5):
+                vision.frames[cam]=(19.98,image,'before','2026-11-24T02:00:00Z')
+                self.assertIsNone(vision.process_frame(cam,20.0))
+                vision.frames[cam]=(20.01,image,'after','2026-11-24T02:00:01Z')
+                self.assertEqual(vision.process_frame(cam,20.0)[1],'after')
+
 
 if __name__=='__main__':unittest.main()

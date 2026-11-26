@@ -1,26 +1,21 @@
 """Transactional command outbox and evidence-driven 12-stage orchestration."""
 import threading
 from .common import *
-from . import contracts
+from . import contracts, placements
 
 TRANSITIONS={
- 'DISPENSE':('DISPENSING','WAIT_FEED_QR',None,None),
- 'MOVE_TO_ASSEMBLY':('TO_ASSEMBLY','ASSEMBLING',None,None),
- 'ASSEMBLE':('ASSEMBLING','TO_PICKUP','LINE','MOVE_TO_PICKUP'),
+ 'DISPENSE':('DISPENSING','TO_ASSEMBLY','LINE','MOVE_TO_ASSEMBLY'),
+ 'MOVE_TO_ASSEMBLY':('TO_ASSEMBLY','WAIT_FEED_QR',None,None),
+ 'ASSEMBLE':('ASSEMBLING','INSPECTING',None,None),
  'MOVE_TO_PICKUP':('TO_PICKUP','PICKING_UP','AGV','PICK_UP'),
- 'PICK_UP':('PICKING_UP','TO_INSPECTION','AGV','GO_TO_INSPECTION'),
- 'GO_TO_INSPECTION':('TO_INSPECTION','INSPECTING',None,None),
+ 'PICK_UP':('PICKING_UP','DELIVERING','AGV','DELIVER'),
  'DELIVER':('DELIVERING','UNLOADING','AGV','UNLOAD'),
  'UNLOAD':('UNLOADING','RETURNING','AGV','RETURN_STANDBY'),
  'RETURN_STANDBY':('RETURNING','CLOSED',None,None)}
 
 
 class Engine:
-    @property
-    def transport_test(self):return self.app.config['V1_MODE']=='TRANSPORT_TEST'
-
-    @property
-    def required_devices(self):return ('LINE','AGV') if self.transport_test else DEVICES
+    required_devices = DEVICES
 
     def device_states(self,db):
         return [json.loads(row['status']) for row in db.execute('SELECT device_id,status FROM V1_DEVICES') if row['device_id'] in self.required_devices]
@@ -44,6 +39,7 @@ class Engine:
                 if self.cycle(db):
                     self._hold(db,'서버 재시작 · 이전 명령 결과와 실물 대조가 필요합니다.')
                     db.execute("UPDATE V1_COMMANDS SET state='UNKNOWN' WHERE attempted=1 AND state IN('ACCEPTED','RUNNING')")
+                    db.execute("UPDATE V1_ARM_CHECKPOINTS SET after_frame=? WHERE state='WAIT_FRAME'",(time.monotonic(),))
                 db.execute('UPDATE V1_PLANT SET auto_enabled=0 WHERE id=1')
                 db.execute("UPDATE V1_DEVICES SET boot_id=?,last_seq=0 WHERE device_id='VISION'",(uid(),))
                 self.acquired=True
@@ -87,12 +83,15 @@ class Engine:
             history(db,cycle,'RECOVERY_REQUIRED',message,command_id,extra=dict(error=error,device_id=device,last_normal_stage=cycle['stage'],operator_action='장비 상태와 실물을 확인한 후 현장 확인을 기록하세요.'))
 
     def ready(self,db):
-        if self.app.config.get('WIRELESS_TEST_ENABLED'):return False
         if not set(self.required_devices)<=self.clients.keys():return False
         devices=self.device_states(db)
+        if not (contracts.valid_order(self.vision.part_order) and placements.supports_refresh(db)):
+            return False
         cameras=self.vision.ready()
-        required_cameras=('cam1','cam4') if self.transport_test else ('cam1','cam2','cam3','cam4')
-        return len(devices)==len(self.required_devices) and all(d['online'] and d['state']=='IDLE' and d['mode']=='AUTO' for d in devices) and all(cameras.get(c,False) for c in required_cameras)
+        return (len(devices)==len(self.required_devices)
+                and all(d['online'] and d['state']=='IDLE' and d['mode']=='AUTO' for d in devices)
+                and all(cameras.get(c,False) for c in ('cam1','cam2','cam3','cam4'))
+                and self.vision.assembly_ready() and self.vision.inspection_ready())
 
     def start_next(self,db):
         plant=db.execute('SELECT * FROM V1_PLANT').fetchone()
@@ -100,12 +99,12 @@ class Engine:
         order=db.execute("SELECT * FROM V1_ORDERS WHERE factory_status='QUEUED' ORDER BY approval_seq LIMIT 1").fetchone()
         if not order:return
         cycle=uid()
-        db.execute("INSERT INTO V1_CYCLES(cycle_id,order_id,stage,created_at,updated_at) VALUES(?,?,'DISPENSING',?,?)",(cycle,order['order_id'],now(),now()))
+        db.execute("INSERT INTO V1_CYCLES(cycle_id,order_id,stage,created_at,updated_at,flow_version) VALUES(?,?,'DISPENSING',?,?,'0.3.0')",
+                   (cycle,order['order_id'],now(),now()))
         db.execute("UPDATE V1_ORDERS SET factory_status='IN_PROGRESS',progress='IN_PRODUCTION',cycle_id=?,updated_at=? WHERE order_id=?",(cycle,now(),order['order_id']))
         db.execute("UPDATE V1_PLANT SET state='RUNNING',stage='DISPENSING',cycle_id=?,updated_at=? WHERE id=1",(cycle,now()))
         cmd=self.queue(db,'LINE',cycle,'DISPENSE',ticket=plant['action_request'])
         history(db,self.cycle(db),'DISPENSE_REQUESTED','수락 순서에 따라 한 장 배출 요청을 저장했습니다.',cmd)
-        if self.transport_test:history(db,self.cycle(db),'TRANSPORT_TEST_STARTED','미조립·미검사 시험 운행 · LINE·QR·AGV 실제 완료 확인',extra={'run_mode':'TRANSPORT_TEST','skipped':['ARM_ASSEMBLY','CAM2_CALIBRATION','YOLO_INSPECTION']})
 
     def plant(self):
         with self.app.app_context(),transaction() as db:
@@ -127,7 +126,7 @@ class Engine:
         identifier(data['request_id']);require(data['action'] in ('START','PAUSE','RESUME'),'공정 동작 오류')
         if 'reason' in data:text(data['reason'],200)
         scope='plant:'+actor
-        with self.app.app_context(),transaction() as db:
+        with self.lock,self.app.app_context(),transaction() as db:
             self.assert_owner(db)
             prior=cached(db,scope,data['request_id'],data)
             if prior:return self.ticket(db,data['request_id']),202
@@ -137,7 +136,7 @@ class Engine:
             action=data['action']
             if action=='START':
                 require(plant['state'] in ('READY','NOT_READY') and not cycle,'현재 공정에서 시작할 수 없습니다.',409,'BAD_TRANSITION')
-                require(self.ready(db),'LINE·AGV와 카메라 1·4의 실물 준비를 확인하세요.' if self.transport_test else '세 장비와 카메라 4대 준비를 확인하세요.',503,'DEVICE_UNAVAILABLE','QUERY_FIRST')
+                require(self.ready(db),'세 장비와 카메라 4대 준비를 확인하세요.',503,'DEVICE_UNAVAILABLE','QUERY_FIRST')
                 db.execute("UPDATE V1_PLANT SET state='READY',auto_enabled=1,action_request=?,updated_at=? WHERE id=1",(data['request_id'],now()))
                 db.execute("INSERT INTO V1_TICKETS VALUES(?,'PLANT','ACCEPTED',NULL,NULL)",(data['request_id'],))
                 self.start_next(db)
@@ -149,6 +148,8 @@ class Engine:
                 db.execute("INSERT INTO V1_TICKETS VALUES(?,'PLANT','ACCEPTED',?,NULL)",(data['request_id'],cycle_id))
             else:
                 require(plant['state']=='PAUSED','모든 장비의 정상 정지 확인 후에만 해제할 수 있습니다.',409,'BAD_TRANSITION')
+                require(not cycle or cycle['flow_version']=='0.3.0',
+                        '이전 공정의 미완료 회차는 현장에서 대조해야 합니다.',409,'RECONCILE_REQUIRED','OPERATOR')
                 ids=json.loads(plant['pause_ids'])
                 require(set(ids)==set(self.required_devices),'정지 명령 대조가 필요합니다.',409,'RECONCILE_REQUIRED','OPERATOR')
                 for device in self.required_devices:self.queue(db,device,cycle_id,'RESUME',{'pause_command_id':ids[device]},data['request_id'])
@@ -169,11 +170,13 @@ class Engine:
         with self.lock,self.app.app_context(),transaction() as db:
             self.assert_owner(db)
             old=db.execute('SELECT * FROM V1_EVENTS WHERE event_id=? OR (device_id=? AND boot_id=? AND event_seq=?)',(data['event_id'],data['device_id'],data['boot_id'],data['event_seq'])).fetchone()
+            device=db.execute('SELECT * FROM V1_DEVICES WHERE device_id=?',(data['device_id'],)).fetchone()
             if old:
                 require(old['body']==dump(data),'같은 이벤트 ID 또는 순번의 내용이 다릅니다.',409,'CONFLICT','QUERY_FIRST')
-                return dict(event_id=data['event_id'],disposition='DUPLICATE' if old['processed'] else 'HELD_FOR_REVIEW')
-            db.execute("INSERT INTO V1_EVENTS VALUES(?,?,?,?,?,'HELD_FOR_REVIEW',0)",(data['event_id'],data['device_id'],data['boot_id'],data['event_seq'],dump(data)))
-            device=db.execute('SELECT * FROM V1_DEVICES WHERE device_id=?',(data['device_id'],)).fetchone()
+                if device['boot_id']!=data['boot_id'] or data['event_seq']<=device['last_seq']:
+                    return dict(event_id=data['event_id'],disposition='DUPLICATE' if old['processed'] else 'HELD_FOR_REVIEW')
+            else:
+                db.execute("INSERT INTO V1_EVENTS VALUES(?,?,?,?,?,'HELD_FOR_REVIEW',0)",(data['event_id'],data['device_id'],data['boot_id'],data['event_seq'],dump(data)))
             if device['boot_id']!=data['boot_id']:
                 self._hold(db,'이전 부팅 또는 미확인 부팅의 회신입니다.',data['device_id'],data['command_id'])
             else:
@@ -183,6 +186,8 @@ class Engine:
                     row=db.execute('SELECT * FROM V1_EVENTS WHERE device_id=? AND boot_id=? AND event_seq=?',(data['device_id'],data['boot_id'],seq+1)).fetchone()
                     if not row:break
                     event=json.loads(row['body'])
+                    if placements.awaiting_ack(db,event):
+                        break
                     accepted=self.on_event(db,event)
                     # Sequence is consumed even when the stage is invalid; never replay motion.
                     seq+=1
@@ -201,6 +206,14 @@ class Engine:
         command=db.execute('SELECT * FROM V1_COMMANDS WHERE command_id=?',(event['command_id'],)).fetchone()
         if not command or command['device_id']!=event['device_id'] or command['cycle_id']!=event['cycle_id'] or command['expected_boot_id']!=event['boot_id']:
             self._hold(db,'장비·명령·회차·부팅이 일치하지 않습니다.',event['device_id'],event['command_id']);return False
+        if not command['attempted']:
+            self._hold(db,'전송 전 명령에 대한 장비 회신입니다.',event['device_id'],event['command_id']);return False
+        if kind=='ARM_PLACEMENT_REQUESTED':
+            if (not cycle or cycle['cycle_id']!=event['cycle_id'] or cycle['stage']!='ASSEMBLING'
+                    or command['action']!='ASSEMBLE' or command['state'] not in ('RUNNING','ACCEPTED')
+                    or not placements.request_checkpoint(db,cycle,command,event)):
+                self._hold(db,'ARM 장착 순서 또는 명령 상태 불일치','ARM',command['command_id']);return False
+            return True
         if kind=='DEVICE_FAILED':
             db.execute("UPDATE V1_COMMANDS SET state='FAILED',error=?,updated_at=? WHERE command_id=?",(dump(event['data']),now(),command['command_id']))
             self._hold(db,event['data']['message'],event['device_id'],command['command_id']);return True
@@ -208,6 +221,9 @@ class Engine:
         if command['action']!=expected or command['state'] in ('FAILED','STOPPED'):
             self._hold(db,'예상하지 않은 명령 완료 종류입니다.',event['device_id'],command['command_id']);return False
         if command['state']=='COMPLETED':return True
+        if expected=='ASSEMBLE' and 'part_order' in json.loads(command['params']):
+            if not {1,2} <= placements.accepted_indices(db,command['command_id']):
+                self._hold(db,'부품 사이 CAM2 좌표 수락 이력이 부족합니다.','ARM',command['command_id']);return False
         if expected in ('DELIVER','UNLOAD') and event['data']['destination']!=json.loads(command['params'])['destination']:
             self._hold(db,'배송 또는 하역 목적지가 다릅니다.',event['device_id'],command['command_id']);return False
         db.execute("UPDATE V1_COMMANDS SET state='COMPLETED',result_event_id=?,error=NULL,updated_at=? WHERE command_id=?",(event['event_id'],now(),command['command_id']))
@@ -231,52 +247,68 @@ class Engine:
 
     def advance(self,db,cycle,event):
         kind=event['kind'];action=contracts.EVENT_RULES[kind][1]
+        if action not in TRANSITIONS or cycle['flow_version'] != '0.3.0':
+            self._hold(db,'개정 공정과 완료 이벤트를 대조하세요.',event['device_id'],event['command_id'])
+            return False
         before,after,device,next_action=TRANSITIONS[action]
         if cycle['stage']!=before:
             self._hold(db,'공정 단계와 완료 이벤트 순서가 다릅니다.',event['device_id'],event['command_id']);return False
         self.stage(db,cycle,after)
         history(db,cycle,kind,'동일 회차의 장비 완료 증거를 확인했습니다.',event['command_id'])
         if action=='DISPENSE':
-            qr=dict(read_id=uid(),attempt=0,state='READING')
-            db.execute('UPDATE V1_CYCLES SET qr=?,qr_due=? WHERE cycle_id=?',(dump(qr),self.clock(),cycle['cycle_id']))
+            self.queue(db,device,cycle['cycle_id'],next_action)
             db.execute("UPDATE V1_TICKETS SET state='COMPLETED' WHERE request_id=(SELECT ticket_id FROM V1_COMMANDS WHERE command_id=?)",(event['command_id'],))
         elif action=='MOVE_TO_ASSEMBLY':
-            if self.transport_test:
-                history(db,cycle,'ASSEMBLY_SKIPPED','운송 시험 · 위치 보정·로봇팔 조립 생략 · IR1 정차 증거 후 IR2 이동')
-                self.stage(db,cycle,'TO_PICKUP')
-                self.queue(db,'LINE',cycle['cycle_id'],'MOVE_TO_PICKUP')
-            else:self.job(db,cycle,'LOCATE')
-        elif action=='GO_TO_INSPECTION':
-            inspection_id=cycle['inspection_id'] or uid()
-            db.execute('UPDATE V1_CYCLES SET inspection_id=? WHERE cycle_id=?',(inspection_id,cycle['cycle_id']))
-            if self.transport_test:
-                order=find_order(db,cycle['order_id'])
-                db.execute("UPDATE V1_ORDERS SET dispatch_station=target_station,progress='SHIPPING',updated_at=? WHERE order_id=?",(now(),cycle['order_id']))
-                self.stage(db,cycle,'DELIVERING')
-                self.queue(db,'AGV',cycle['cycle_id'],'DELIVER',dict(destination=order['target_station'],inspection_id=inspection_id))
-                history(db,cycle,'INSPECTION_SKIPPED','운송 시험 · YOLO·암실 QR 검사 생략 · 합격 판정 없이 주문 HUB로 이동',extra={'run_mode':'TRANSPORT_TEST','routing_reference_id':inspection_id,'dispatch_station':order['target_station']})
-            else:
-                db.execute('INSERT OR IGNORE INTO V1_INSPECTIONS(inspection_id,cycle_id,order_id) VALUES(?,?,?)',(inspection_id,cycle['cycle_id'],cycle['order_id']))
-                db.execute("UPDATE V1_ORDERS SET progress='INSPECTING',updated_at=? WHERE order_id=?",(now(),cycle['order_id']))
-                self.job(db,cycle,'INSPECT',{'inspection_id':inspection_id})
+            qr=dict(read_id=uid(),attempt=0,state='READING')
+            db.execute('UPDATE V1_CYCLES SET qr=?,qr_due=? WHERE cycle_id=?',(dump(qr),self.clock(),cycle['cycle_id']))
+        elif action=='ASSEMBLE':
+            self.start_inspection(db,cycle,event['command_id'])
         elif action=='RETURN_STANDBY':
             order=find_order(db,cycle['order_id'])
             normal=order['dispatch_station']==order['target_station'] and order['outcome']!='ERROR'
             db.execute('UPDATE V1_ORDERS SET factory_status=?,progress=?,outcome=?,updated_at=? WHERE order_id=?',
-                ('COMPLETED' if normal else 'ERROR_DELIVERED','HUB_ARRIVED' if normal else 'SHIPPING','OPEN' if self.transport_test and normal else 'NORMAL' if normal else 'ERROR',now(),cycle['order_id']))
-            if self.transport_test:history(db,cycle,'TRANSPORT_TEST_COMPLETED','운송 시험 복귀 완료 · 조립·검사 미수행 · 제품 합격 판정 없음',extra={'run_mode':'TRANSPORT_TEST','quality_verified':False})
+                ('COMPLETED' if normal else 'ERROR_DELIVERED','HUB_ARRIVED' if normal else 'SHIPPING','NORMAL' if normal else 'ERROR',now(),cycle['order_id']))
             db.execute("UPDATE V1_CYCLES SET closed=1,stage='CLOSED',updated_at=? WHERE cycle_id=?",(now(),cycle['cycle_id']))
             db.execute("UPDATE V1_PALLETS SET cycle_id=NULL,stage='AWAIT_MANUAL_RETURN',updated_at=? WHERE pallet_id=?",(now(),cycle['pallet_id']))
             db.execute("UPDATE V1_PLANT SET state='READY',stage='READY',cycle_id=NULL,updated_at=? WHERE id=1",(now(),))
         elif next_action:
             params={}
-            if next_action=='UNLOAD':
-                order=find_order(db,cycle['order_id']);params=dict(destination=order['dispatch_station'],inspection_id=cycle['inspection_id'])
+            if next_action in ('PICK_UP','DELIVER','UNLOAD'):
+                inspection=db.execute('SELECT body FROM V1_INSPECTIONS WHERE inspection_id=? AND cycle_id=?',
+                                      (cycle['inspection_id'],cycle['cycle_id'])).fetchone()
+                if not inspection or not inspection['body'] or json.loads(inspection['body'])['verdict']!='PASS':
+                    self._hold(db,'같은 회차의 저장된 검사 합격을 확인하세요.',event['device_id'],event['command_id'])
+                    return False
+                if next_action!='PICK_UP':
+                    order=find_order(db,cycle['order_id'])
+                    require(order['dispatch_station']==order['target_station'],'합격품 목적지가 주문과 다릅니다.',409,'CONFLICT')
+                    params=dict(destination=order['dispatch_station'],inspection_id=cycle['inspection_id'])
+                    db.execute("UPDATE V1_ORDERS SET progress='SHIPPING',updated_at=? WHERE order_id=?",(now(),cycle['order_id']))
             self.queue(db,device,cycle['cycle_id'],next_action,params)
         return True
 
+    def start_inspection(self,db,cycle,command_id):
+        previous=cycle['inspection_id']
+        attempt=1
+        if previous:
+            parent=db.execute('SELECT attempt_number FROM V1_INSPECTIONS WHERE cycle_id=? AND inspection_id=?',
+                              (cycle['cycle_id'],previous)).fetchone()
+            rework=db.execute("SELECT 1 FROM V1_HISTORY WHERE cycle_id=? AND command_id=? AND inspection_id=? AND kind='REWORK_REQUESTED'",
+                              (cycle['cycle_id'],command_id,previous)).fetchone()
+            require(parent and rework,'재작업 명령과 이전 검사를 대조하세요.',409,'RECONCILE_REQUIRED','OPERATOR')
+            attempt=parent['attempt_number']+1
+        inspection_id=uid()
+        db.execute('''INSERT INTO V1_INSPECTIONS(inspection_id,cycle_id,order_id,attempt_number,previous_inspection_id,
+            rework_command_id,source_command_id) VALUES(?,?,?,?,?,?,?)''',
+            (inspection_id,cycle['cycle_id'],cycle['order_id'],attempt,previous,command_id if previous else None,command_id))
+        db.execute('UPDATE V1_CYCLES SET inspection_id=? WHERE cycle_id=?',(inspection_id,cycle['cycle_id']))
+        db.execute("UPDATE V1_ORDERS SET progress='INSPECTING',updated_at=? WHERE order_id=?",(now(),cycle['order_id']))
+        self.job(db,cycle,'INSPECT',{'inspection_id':inspection_id})
+
     def job(self,db,cycle,action,payload=None):
-        db.execute('INSERT INTO V1_VISION_JOBS(job_id,cycle_id,action,payload) VALUES(?,?,?,?)',(uid(),cycle['cycle_id'],action,dump(payload or {})))
+        data=dict(payload or {})
+        data.update(after_frame=time.monotonic(),controller=self.instance_id)
+        db.execute('INSERT INTO V1_VISION_JOBS(job_id,cycle_id,action,payload) VALUES(?,?,?,?)',(uid(),cycle['cycle_id'],action,dump(data)))
 
     def bind(self,db,cycle,qr):
         pallet=qr['pallet_id']
@@ -284,12 +316,12 @@ class Engine:
         require(row is not None and row['stage']=='READY' and row['cycle_id'] is None,'팔레트가 사용 가능 상태가 아닙니다.',409,'CONFLICT','OPERATOR')
         db.execute('UPDATE V1_CYCLES SET pallet_id=? WHERE cycle_id=?',(pallet,cycle['cycle_id']))
         db.execute('UPDATE V1_ORDERS SET pallet_id=?,updated_at=? WHERE order_id=?',(pallet,now(),cycle['order_id']))
-        db.execute("UPDATE V1_PALLETS SET cycle_id=?,stage='TO_ASSEMBLY',updated_at=? WHERE pallet_id=?",(cycle['cycle_id'],now(),pallet))
+        db.execute("UPDATE V1_PALLETS SET cycle_id=?,stage='ASSEMBLING',updated_at=? WHERE pallet_id=?",(cycle['cycle_id'],now(),pallet))
         qr['state']='BOUND'
         db.execute('UPDATE V1_CYCLES SET qr=?,qr_due=NULL WHERE cycle_id=?',(dump(qr),cycle['cycle_id']))
-        self.stage(db,cycle,'TO_ASSEMBLY')
-        self.queue(db,'LINE',cycle['cycle_id'],'MOVE_TO_ASSEMBLY')
-        history(db,cycle,'QR_BOUND','QR·주문·회차 DB 저장 완료 후 최초 벨트 출발을 요청했습니다.',extra={'pallet_id':pallet})
+        self.stage(db,cycle,'ASSEMBLING')
+        self.job(db,cycle,'LOCATE')
+        history(db,self.cycle(db),'QR_BOUND','IR1 정차 후 QR·주문·회차 배정 저장 완료',extra={'pallet_id':pallet})
 
     def vision_event(self,db,cycle,event):
         data=event['data']
@@ -314,13 +346,18 @@ class Engine:
             for ticket in db.execute("SELECT * FROM V1_TICKETS WHERE cycle_id=? AND kind='QR' AND read_id=?",(cycle['cycle_id'],qr['read_id'])).fetchall():
                 db.execute('UPDATE V1_TICKETS SET state=? WHERE request_id=?',('COMPLETED' if qr['state']=='BOUND' else 'FAILED' if qr['state'] in ('UNREADABLE','SAVE_FAILED') else 'RUNNING',ticket['request_id']))
             return True
-        inspection=db.execute('SELECT * FROM V1_INSPECTIONS WHERE cycle_id=?',(cycle['cycle_id'],)).fetchone()
-        if cycle['stage']!='INSPECTING' or not inspection or inspection['inspection_id']!=data.get('inspection_id') or (event['kind']=='INSPECTION_CAPTURED' and data['cycle_id']!=cycle['cycle_id']):
-            self._hold(db,'검사 ID 또는 촬영 회차가 일치하지 않습니다.','VISION');return False
-        if inspection['body']:return True
+        inspection=db.execute('SELECT * FROM V1_INSPECTIONS WHERE cycle_id=? AND inspection_id=?',
+                              (cycle['cycle_id'],data.get('inspection_id'))).fetchone()
+        if (cycle['stage']!='INSPECTING' or not inspection or inspection['inspection_id']!=cycle['inspection_id']
+                or inspection['body'] or (event['kind']=='INSPECTION_CAPTURED' and data['cycle_id']!=cycle['cycle_id'])):
+            history(db,cycle,'STALE_INSPECTION','이전 검사 또는 회차의 응답을 보류했습니다.')
+            return False
+        if db.execute('SELECT state FROM V1_PLANT WHERE id=1').fetchone()[0]!='RUNNING':
+            history(db,cycle,'INSPECTION_WHILE_HELD','정지 중 검사 응답을 보류했습니다.',inspection_id=inspection['inspection_id'])
+            return False
         order=find_order(db,cycle['order_id'])
         if event['kind']=='INSPECTION_UNAVAILABLE':
-            verdict,reasons,destination='INDETERMINATE',['NO_FRAME'],7
+            verdict,reasons,destination='INDETERMINATE',['NO_FRAME'],None
             frame=captured=image_ref=None
         else:
             verdict,reasons,destination=contracts.inspect_result(data,json.loads(order['spec']),cycle['pallet_id'],order['target_station'])
@@ -328,12 +365,25 @@ class Engine:
         image=self.vision.inspection_image(image_ref) if image_ref else None
         if image_ref:require(image is not None,'동일 검사 프레임의 보관 증거가 없습니다.',422,'CONFLICT','QUERY_FIRST')
         result=dict(order_id=cycle['order_id'],inspection_id=inspection['inspection_id'],cycle_id=cycle['cycle_id'],expected_pallet_id=cycle['pallet_id'],
-                    verdict=verdict,reasons=reasons,dispatch_station=destination,captured_at=captured,frame_id=frame,image_ref=image_ref)
+                    verdict=verdict,reasons=reasons,dispatch_station=destination,captured_at=captured,frame_id=frame,image_ref=image_ref,
+                    attempt_number=inspection['attempt_number'],previous_inspection_id=inspection['previous_inspection_id'],
+                    rework_command_id=inspection['rework_command_id'])
         db.execute('UPDATE V1_INSPECTIONS SET body=?,vision=?,image=?,archive_id=? WHERE inspection_id=?',(dump(result),dump(data) if event['kind']=='INSPECTION_CAPTURED' else None,image,uid() if image else None,inspection['inspection_id']))
-        db.execute("UPDATE V1_ORDERS SET dispatch_station=?,outcome=?,progress='SHIPPING',updated_at=? WHERE order_id=?",(destination,'OPEN' if verdict=='PASS' else 'ERROR',now(),cycle['order_id']))
-        self.stage(db,cycle,'DELIVERING')
-        self.queue(db,'AGV',cycle['cycle_id'],'DELIVER',dict(destination=destination,inspection_id=inspection['inspection_id']))
-        history(db,cycle,'INSPECTION_'+verdict,'검사 결과와 실제 배송 지시를 함께 저장했습니다.',inspection_id=inspection['inspection_id'])
+        inspection_id=inspection['inspection_id']
+        if verdict=='PASS':
+            db.execute("UPDATE V1_ORDERS SET dispatch_station=?,updated_at=? WHERE order_id=?",(destination,now(),cycle['order_id']))
+            self.stage(db,cycle,'TO_PICKUP')
+            self.queue(db,'LINE',cycle['cycle_id'],'MOVE_TO_PICKUP')
+            message='검사 합격 저장 · IR2 이송 요청'
+        elif (self.app.config['V1_MODE']=='SIMULATION' and inspection['attempt_number']==1
+              and set(reasons)&{'PART_MISSING','WRONG_PART'} and 'QR_MISMATCH' not in reasons):
+            # A single simulated rework demonstrates the correlation. Real rework has no approved command contract yet.
+            self.stage(db,cycle,'ASSEMBLING')
+            self.job(db,cycle,'LOCATE',{'previous_inspection_id':inspection_id})
+            message='결함 판정 저장 · 모의 재작업 대기'
+        else:
+            message='검사 결과 저장 · 벨트 정차 유지 · 현장 확인 필요'
+        history(db,self.cycle(db),'INSPECTION_'+verdict,message,inspection_id=inspection_id)
         return True
 
     def retry_qr(self,actor,cycle_id,data):
@@ -408,10 +458,18 @@ class Engine:
                         self.hold('장비 동작 결과 확인 또는 현장 대조가 필요합니다.',row['device_id'],row['command_id'])
                     elif state!='COMPLETED':
                         with transaction() as db:db.execute('UPDATE V1_COMMANDS SET state=?,updated_at=? WHERE command_id=? AND state!=\'COMPLETED\'',(state,now(),row['command_id']))
-                except Exception:
+                except Exception as error:
+                    if not row['attempted'] and isinstance(error,Fault) and error.status==422:
+                        with transaction() as db:
+                            self.assert_owner(db)
+                            db.execute("UPDATE V1_COMMANDS SET state='FAILED',error=?,updated_at=? WHERE command_id=?",
+                                       (dump(error.body),now(),row['command_id']))
+                            self._hold(db,f"{row['action']} 거절 · {error}",row['device_id'],row['command_id'])
+                        continue
                     with transaction() as db:db.execute("UPDATE V1_COMMANDS SET state='UNKNOWN',updated_at=? WHERE command_id=? AND state!='COMPLETED'",(now(),row['command_id']))
                     self.hold('명령 응답 유실 · 조회 우선 · 자동 재전송하지 않습니다.',row['device_id'],row['command_id'])
             self.run_vision_jobs()
+            placements.process(self)
 
     def refresh_devices(self):
         for device,client in self.clients.items():
@@ -451,23 +509,56 @@ class Engine:
             order=find_order(db,cycle['order_id'])
         try:
             payload=json.loads(job['payload'])
+            sample=None
+            if self.app.config['V1_MODE']=='HARDWARE':
+                camera={'QR':'cam1','LOCATE':'cam2','INSPECT':self.vision.inspection_camera}[job['action']]
+                # Pending jobs may predate this process (or the monotonic clock epoch).
+                if payload.get('controller')!=self.instance_id:
+                    payload.update(controller=self.instance_id,after_frame=time.monotonic())
+                    with transaction() as db:
+                        db.execute('UPDATE V1_VISION_JOBS SET payload=? WHERE job_id=?',(dump(payload),job['job_id']))
+                    return
+                sample=self.vision.process_frame(camera,payload['after_frame'])
+                if sample is None:
+                    if time.monotonic()-payload['after_frame']<2:return
+                    sample=(None,None,None)
             if job['action']=='QR':
-                data=self.vision.read_feed_qr(cycle['cycle_id'],payload['read_id'],payload['attempt']+1)
+                data=self.vision.read_feed_qr(cycle['cycle_id'],payload['read_id'],payload['attempt']+1,sample)
                 self.record(self.internal_event(cycle['cycle_id'],'FEED_QR_READ',data))
             elif job['action']=='LOCATE':
-                poses=self.vision.locate_assembly(cycle['cycle_id'],json.loads(order['spec']))
+                poses=self.vision.locate_assembly(cycle['cycle_id'],json.loads(order['spec']),sample)
                 contracts.pose_set(poses)
                 self.vision.validate_poses(poses)
                 with transaction() as db:
                     current=self.cycle(db)
                     require(current and current['cycle_id']==cycle['cycle_id'] and current['stage']=='ASSEMBLING' and poses['spec']==json.loads(find_order(db,cycle['order_id'])['spec']),'활성 회차·주문 사양이 달라졌습니다.',409,'STALE_CYCLE')
-                    self.queue(db,'ARM',cycle['cycle_id'],'ASSEMBLE',poses)
+                    order_parts=self.vision.part_order
+                    require(contracts.valid_order(order_parts) and placements.supports_refresh(db),'승인된 장착 순서와 ARM 좌표 갱신 기능이 필요합니다.',422,'UNSUPPORTED_VERSION')
+                    previous=payload.get('previous_inspection_id')
+                    if previous:
+                        require(self.app.config['V1_MODE']=='SIMULATION' and current['inspection_id']==previous,
+                                '승인된 재작업 명령이 필요합니다.',409,'RECONCILE_REQUIRED','OPERATOR')
+                    command_id=self.queue(db,'ARM',cycle['cycle_id'],'ASSEMBLE',dict(pose_policy='REFRESH_BETWEEN_PARTS',part_order=order_parts,initial_poses=poses))
+                    if previous:
+                        history(db,current,'REWORK_REQUESTED','모의 재작업 요청',command_id,inspection_id=previous)
+                    db.execute("UPDATE V1_VISION_JOBS SET state='DONE' WHERE job_id=?",(job['job_id'],))
+                return
             else:
-                data=self.vision.inspect_product(cycle['cycle_id'],payload['inspection_id'],json.loads(order['spec']),cycle['pallet_id'])
+                data=self.vision.inspect_product(cycle['cycle_id'],payload['inspection_id'],json.loads(order['spec']),cycle['pallet_id'],sample)
                 kind='INSPECTION_CAPTURED' if data is not None else 'INSPECTION_UNAVAILABLE'
                 data=data or dict(inspection_id=payload['inspection_id'],reason='NO_FRAME')
-                self.record(self.internal_event(cycle['cycle_id'],kind,data))
-                if kind=='INSPECTION_CAPTURED':self.vision.release_image(data['image_ref'])
+                try:
+                    result=self.record(self.internal_event(cycle['cycle_id'],kind,data))
+                finally:
+                    if kind=='INSPECTION_CAPTURED':self.vision.release_image(data['image_ref'])
+                if result['disposition']=='HELD_FOR_REVIEW':
+                    with transaction() as db:
+                        current=self.cycle(db)
+                        state=db.execute('SELECT state FROM V1_PLANT WHERE id=1').fetchone()[0]
+                        if current and current['inspection_id']==payload['inspection_id'] and state in ('PAUSING','PAUSED','RESUMING'):
+                            payload['after_frame']=time.monotonic()
+                            db.execute('UPDATE V1_VISION_JOBS SET payload=? WHERE job_id=?',(dump(payload),job['job_id']))
+                            return
             with transaction() as db:db.execute("UPDATE V1_VISION_JOBS SET state='DONE' WHERE job_id=?",(job['job_id'],))
         except Exception:
             with transaction() as db:db.execute("UPDATE V1_VISION_JOBS SET state='FAILED' WHERE job_id=?",(job['job_id'],))

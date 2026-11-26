@@ -17,8 +17,8 @@ public partial class QrRoiView:UserControl
     public QrRoiView()
     {
         InitializeComponent();
-        Loaded+=(_,_)=>{model=DataContext as QrRoiViewModel;if(model is not null){model.PropertyChanged+=Changed;model.Start();}Draw();};
-        Unloaded+=(_,_)=>{if(model is not null){model.PropertyChanged-=Changed;model.Dispose();}model=null;};
+        Loaded+=(_,_)=>{model=DataContext as QrRoiViewModel;if(model is not null)model.PropertyChanged+=Changed;Draw();};
+        Unloaded+=(_,_)=>{if(model is not null)model.PropertyChanged-=Changed;model=null;};
     }
     private void Changed(object? sender,PropertyChangedEventArgs e){if(e.PropertyName is "Roi" or "FullFrame")Draw();}
     private Rect Bounds()

@@ -10,6 +10,6 @@ public partial class LoginView : UserControl
         if (DataContext is not LoginViewModel model) return;
         var password = PasswordInput.Password;
         PasswordInput.Clear();
-        await model.LoginAsync(password);
+        await model.LoginFromScreenAsync(password);
     }
 }

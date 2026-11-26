@@ -9,22 +9,28 @@ from . import contracts
 class HttpDevice:
     def __init__(self,device,config):self.device,self.config=device,config
 
-    def call(self,path,data=None,boot=None):
+    def call(self,path,data=None,boot=None,method=None):
         renew=getattr(self,'renew_lease',None)
         if renew:renew()
         base=self.config.get('base_url','').rstrip('/')
         require(base.startswith('https://') or base.startswith('http://127.0.0.1:'),'장비 HTTPS 주소 또는 로컬 연결 설정이 필요합니다.',503,'DEVICE_UNAVAILABLE')
         headers={'Authorization':'Bearer '+self.config['controller_token'],'Content-Type':'application/json'}
         if boot:headers['X-Expected-Boot-Id']=boot
-        req=urllib.request.Request(base+path,data=dump(data).encode() if data is not None else None,headers=headers)
+        req=urllib.request.Request(base+path,data=dump(data).encode() if data is not None else None,headers=headers,method=method)
         try:
-            with urllib.request.urlopen(req,timeout=self.config.get('request_timeout_seconds',2)) as response:return json.load(response)
+            with urllib.request.urlopen(req,timeout=self.config.get('request_timeout_seconds',2)) as response:
+                if method=='PUT':
+                    require(response.status==204,'좌표 접수 응답은 204여야 합니다.',409,'CONFLICT')
+                    return
+                return json.load(response)
         except urllib.error.HTTPError as error:
             try:payload=json.loads(error.read())
             except Exception:payload={}
             raise Fault(error.code if error.code in (400,401,403,404,409,422,503) else 503,payload.get('code','DEVICE_UNAVAILABLE'),payload.get('message','장비 요청 실패'),'QUERY_FIRST')
 
     def status(self):return self.call('/device/v1/status')
+    def placement(self,command_id,key,body,boot):
+        self.call(f'/device/v1/commands/{command_id}/placements/{key}',body,boot,'PUT')
     def submit(self,data,boot):return self.call('/device/v1/commands',data,boot)
     def command(self,command_id):return self.call('/device/v1/commands/'+command_id)
     def events(self,boot,after):
@@ -44,6 +50,9 @@ class SimDevice:
         self.active=None;self.control=None;self.due=0.;self.left=0.;self.paused=False
         self.last=None;self.lock=__import__('threading').RLock()
         self.delay=.5
+        self.checkpoint=None
+        self.part_index=0
+        self.placements={}
 
     def result(self,command,state,event_id=None):
         return dict(command_id=command['command_id'],cycle_id=command['cycle_id'],device_id=self.device,state=state,updated_at=now(),result_event_id=event_id,error=None)
@@ -69,6 +78,7 @@ class SimDevice:
             else:
                 require(self.active is None and not self.paused,'장비가 사용 중입니다.',409,'CONFLICT')
                 self.active=data;self.due=self.clock()+self.delay
+                self.part_index=0;self.checkpoint=None
             self.payloads[data['command_id']]=dump(data)
             self.records[data['command_id']]=self.result(data,'ACCEPTED')
             return self.records[data['command_id']].copy()
@@ -90,7 +100,19 @@ class SimDevice:
                 self.paused=False;self.due=self.clock()+self.left
                 self.emit(command,'DEVICE_RESUMED',{})
         if self.active and not self.paused and self.clock()>=self.due:
-            command=self.active;self.active=None
+            command=self.active
+            if command['action']=='ASSEMBLE' and 'part_order' in command['params']:
+                if self.checkpoint:return
+                order=command['params']['part_order']
+                self.part_index+=1
+                if self.part_index<len(order):
+                    self.checkpoint=uid()
+                    self.log.append(dict(event_id=self.checkpoint,device_id='ARM',boot_id=self.boot,event_seq=len(self.log)+1,
+                        cycle_id=command['cycle_id'],command_id=command['command_id'],occurred_at=now(),kind='ARM_PLACEMENT_REQUESTED',
+                        data=dict(completed_parts=order[:self.part_index],next_part=order[self.part_index],gripper_clear=True)))
+                    self.records[command['command_id']]=self.result(command,'RUNNING')
+                    return
+            self.active=None
             kind=next(kind for kind,rule in contracts.EVENT_RULES.items() if rule[1]==command['action'])
             detail={k:(command['params']['destination'] if k=='destination' else v) for k,v in contracts.EVENT_RULES[kind][2].items()}
             if command['action']=='DISPENSE':detail['evidence']='TIMER'
@@ -101,7 +123,21 @@ class SimDevice:
             self.update()
             return dict(device_id=self.device,boot_id=self.boot,mode='AUTO',state='PAUSED' if self.paused else 'BUSY' if self.active or self.control else 'IDLE',
                 cycle_id=self.active['cycle_id'] if self.active else None,active_command_id=self.active['command_id'] if self.active else None,
-                last_completed_command_id=self.last,observed_at=now(),online=True)
+                last_completed_command_id=self.last,observed_at=now(),online=True,
+                **({'capabilities':[contracts.REFRESH_CAPABILITY]} if self.device=='ARM' else {}))
+
+    def placement(self,command_id,key,body,boot):
+        with self.lock:
+            require(self.device=='ARM' and boot==self.boot,'장비 또는 부팅 불일치',409,'CONFLICT')
+            if (command_id,key) in self.placements:
+                require(self.placements[command_id,key]==dump(body),'좌표 입력 충돌',409,'CONFLICT')
+                return
+            require(self.active and self.active['command_id']==command_id and self.checkpoint==key and not self.paused,
+                    '현재 ARM 장착 대기점이 아닙니다.',409,'BAD_TRANSITION')
+            require(body['cycle_id']==self.active['cycle_id'] and body['part']==self.active['params']['part_order'][self.part_index],
+                    '장착 회차 또는 부품 불일치',409,'STALE_CYCLE')
+            self.placements[command_id,key]=dump(body)
+            self.checkpoint=None;self.due=self.clock()+self.delay
 
     def command(self,command_id):
         with self.lock:
@@ -143,6 +179,14 @@ def create_adapter_api():
 
     @api.get('/commands/<command_id>')
     def command_result(command_id):return adapter().command(identifier(command_id))
+
+    @api.put('/commands/<command_id>/placements/<checkpoint_id>')
+    def put_placement(command_id,checkpoint_id):
+        boot=identifier(request.headers.get('X-Expected-Boot-Id'))
+        data=request.get_json(silent=True)
+        contracts.placement(data)
+        adapter().placement(identifier(command_id),identifier(checkpoint_id),data,boot)
+        return '',204
 
     @api.get('/status')
     def status():return adapter().status()

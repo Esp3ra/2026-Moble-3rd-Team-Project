@@ -6,16 +6,16 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[3]
 
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--cli',default='arduino-cli');args=parser.parse_args()
-    source=ROOT/'firmware/MobotLineV1'
+    source=ROOT/'firmware/RobotWorkSimulation'
     with tempfile.TemporaryDirectory(prefix='mobot-uno-compile-') as directory:
         root=Path(directory)
         subprocess.run([args.cli,'compile','--fqbn','arduino:avr:uno','--warnings','all','--build-path',str(root/'locked-build'),str(source)],check=True)
-        enabled=root/'MobotLineV1';shutil.copytree(source,enabled)
+        enabled=root/'RobotWorkSimulation';shutil.copytree(source,enabled)
         profile=enabled/'hardware_profile.h';text=profile.read_text(encoding='utf-8-sig')
         text=text.replace('TIMING_PROFILE_APPROVED = false','TIMING_PROFILE_APPROVED = true')
         # Test constants keep live branches in the compiled object. Never upload this build.

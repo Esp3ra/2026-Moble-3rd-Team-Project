@@ -7,14 +7,15 @@ from datetime import datetime,timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from server_paths import instance_directory
 
 
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument('--pi-config',required=True,help='Private JSON created by python -m raspi_line --init-config')
+    p.add_argument('--pi-config',required=True,help='Private JSON created by python -m devices.line_pi --init-config')
     p.add_argument('--line-url',required=True,help='Private HTTPS adapter, or http://127.0.0.1:port over an SSH tunnel')
-    p.add_argument('--settings',default=str(ROOT/'instance/factory-v1.json'))
+    p.add_argument('--settings',default=str(instance_directory()/'factory-v1.json'))
     p.add_argument('--cameras',nargs=4,type=int,metavar=('CAM1','CAM2','CAM3','CAM4'))
     args=p.parse_args();url=urlsplit(args.line_url)
     if not (url.scheme=='https' or url.scheme=='http' and url.hostname=='127.0.0.1') or not url.hostname or 'ngrok' in url.hostname.lower() or url.username or url.password or url.query or url.fragment or url.path not in ('','/'):

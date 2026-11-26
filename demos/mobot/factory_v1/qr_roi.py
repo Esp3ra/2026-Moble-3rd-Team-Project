@@ -68,8 +68,8 @@ class QrRoi:
             self.capture_count+=1;at=time.monotonic()
             if at-self.capture_at>=1:self.capture_fps=self.capture_count/(at-self.capture_at);self.capture_count=0;self.capture_at=at
 
-    def read_now(self):
-        frame,frame_id,captured=self.owner.frame_data('cam1')
+    def read_now(self,sample=None):
+        frame,frame_id,captured=self.owner.frame_data('cam1') if sample is None else sample
         with self.lock:roi=self.roi.copy();revision=self.revision
         empty=dict(state='NO_FRAME',pallet_id=None,text='',decoded_values=[],method=None,frame_id=frame_id,captured_at=captured,revision=revision)
         if frame is None:return empty

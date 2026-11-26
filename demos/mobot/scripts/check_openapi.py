@@ -15,9 +15,9 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'tests')]
 from test_factory_v1 import FactoryTests
 from factory_v1.common import uid
-from factory_v1.account_policy import ACCOUNT_DISPLAY_NAME_MAX
+from factory_v1.account_policy import ACCOUNT_DISPLAY_NAME_MAX,ACCOUNT_DISPLAY_NAME_RESPONSE_MAX
 
-REVISION='216115315c72f726f0c0aa77d13f82f75436dd72'
+REVISION='727133b935cb94fe39fed2e6a2634fade284e60c'
 
 
 def main():
@@ -31,12 +31,9 @@ def main():
         with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=20) as response:
             source=base64.b64decode(json.load(response)['content']).decode()
     document=yaml.safe_load(source)
-    # Explicit local decision; do not silently report this as unchanged main compliance.
-    for schema_name in ('AccountCreate','Account'):
-        field=document['components']['schemas'][schema_name]['properties']['display_name']
-        assert field['maxLength'] in (100,128), 'Re-review changed upstream account name contract'
-        field['maxLength']=ACCOUNT_DISPLAY_NAME_MAX
-    print('Contract delta: user-approved account display_name request/response maxLength=128; main response currently 100.')
+    schemas=document['components']['schemas']
+    assert schemas['AccountCreate']['properties']['display_name']['maxLength']==ACCOUNT_DISPLAY_NAME_MAX
+    assert schemas['Account']['properties']['display_name']['maxLength']==ACCOUNT_DISPLAY_NAME_RESPONSE_MAX
     case=FactoryTests('test_stock_shared_and_public_privacy');case.setUp();checks=[]
     def call(path,method='get',data=None,auth=None,actual=None,client=None):
         kwargs={}
@@ -44,6 +41,9 @@ def main():
         if auth is not None:kwargs['headers']=auth
         response=getattr(client or case.client,method)(actual or path,**kwargs)
         operation=document['paths'][path][method]
+        if data is not None and response.status_code<300:
+            request_schema=operation['requestBody']['content']['application/json']['schema']
+            Draft202012Validator({**request_schema,'components':document['components']},format_checker=FormatChecker()).validate(data)
         expected=operation['responses'].get(str(response.status_code))
         assert expected,f'Undeclared status {response.status_code}: {method} {path} {response.json}'
         if '$ref' in expected:expected=document['components']['responses'][expected['$ref'].split('/')[-1]]
@@ -79,7 +79,9 @@ def main():
         call('/api/v1/inspections/{inspection_id}/image',auth=a,actual='/api/v1/inspections/'+inspection+'/image')
         for camera in ('CAM1','CAM2','CAM3','CAM4'):call('/api/v1/cameras/{camera_id}/frame',auth=a,actual='/api/v1/cameras/'+camera+'/frame')
         call('/api/v1/stock/restocks','post',dict(request_id=uid(),stock_key='ARM_1',added_units=1),s)
-        account=call('/api/v1/accounts','post',dict(request_id=uid(),login_id='schema-user',display_name='가'*128,role='ADMIN',initial_password='test-only'),s).json
+        account=call('/api/v1/accounts','post',dict(request_id=uid(),login_id='schema-user',display_name='가'*100,role='ADMIN',initial_password='test-only'),s).json
+        boundary=call('/api/v1/accounts','post',dict(request_id=uid(),login_id='schema-boundary',display_name='가'*128,role='ADMIN',initial_password='test-only'),s)
+        assert boundary.status_code==201 and boundary.json['display_name']=='가'*100
         call('/api/v1/accounts','post',dict(request_id=uid(),login_id='schema-too-long',display_name='가'*129,role='ADMIN',initial_password='test-only'),s)
         call('/api/v1/accounts/{account_id}/role','patch',dict(request_id=uid(),role='SUPER_ADMIN'),s,'/api/v1/accounts/'+account['account_id']+'/role')
         call('/api/v1/manual-actions','post',dict(request_id=uid(),device_id='LINE',procedure_id='unapproved',reason='규약 검증'),a)
@@ -98,6 +100,18 @@ def main():
         call('/device/v1/commands/{command_id}',auth=control,actual='/device/v1/commands/'+command)
         call('/device/v1/events',auth=control,actual=f'/device/v1/events?boot_id={agv.boot}&after_seq=0')
         call('/device/v1/commands','post',json.loads(agv.payloads[command]),{**control,'X-Expected-Boot-Id':agv.boot})
+        arm=case.engine.clients['ARM']
+        case.app.config['V1_ADAPTER_DEVICE']='ARM'
+        call('/device/v1/status',auth=control)
+        for event in arm.log:
+            assert call('/api/v1/device-events','post',event,{'Authorization':'Bearer arm-test'}).status_code==200
+        arm_header={**control,'X-Expected-Boot-Id':arm.boot}
+        assert len(arm.placements)==2
+        for (command_id,checkpoint),payload in arm.placements.items():
+            placement_path='/device/v1/commands/{command_id}/placements/{checkpoint_id}'
+            actual=placement_path.format(command_id=command_id,checkpoint_id=checkpoint)
+            assert call(placement_path,'put',json.loads(payload),arm_header,actual).status_code==204
+        assert call('/device/v1/commands','post',json.loads(arm.payloads[command_id]),arm_header).status_code==200
         call('/api/v1/auth/logout','post',auth=a)
         from test_line_adapter import LineTests
         line=LineTests();line.setUp()
@@ -114,19 +128,7 @@ def main():
             line.config['hardware_profile_approved']=False
             live('/device/v1/commands','post',line.command('MOVE_TO_ASSEMBLY'))
         finally:line.doCleanups()
-        from test_transport_test import TransportTests
-        transport=TransportTests();transport.setUp()
-        try:
-            def trial(path,method='get',data=None,actual=None):return call(path,method,data,transport.case.auth,actual,transport.client)
-            trial('/api/v1/plant')
-            trial('/api/v1/pallets')
-            order,_=transport.case.order();transport.case.accept(order);transport.case.start();transport.case.tick(90)
-            trial('/api/v1/orders/{order_id}',actual='/api/v1/orders/'+order['order_id'])
-            trial('/api/v1/orders/{order_id}/history',actual='/api/v1/orders/'+order['order_id']+'/history')
-            trial('/api/v1/orders/lookup','post',{'order_id':order['order_id']})
-            trial('/api/v1/plant')
-        finally:transport.doCleanups()
-        print(f'PASS: {len(checks)} actual responses validated against {args.ref[:12]} / contract {document["info"]["version"]} plus the explicit account-name 128 override (OpenAPI held only in memory). Optional hardware capabilities are not exercised by this check.')
+        print(f'PASS: {len(checks)} HTTP cases against unmodified {args.ref[:12]} / {document["info"]["version"]}, including ARM checkpoints (in-memory OpenAPI, simulated devices).')
     finally:case.doCleanups()
 
 

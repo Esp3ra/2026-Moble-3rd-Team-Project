@@ -19,18 +19,19 @@
      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="370" /></Grid.ColumnDefinitions>
      <StackPanel VerticalAlignment="Center">
       <TextBlock Text="ROBOT FACTORY" FontSize="20" FontWeight="Bold" TextWrapping="NoWrap" />
-      <TextBlock Text="{Binding SessionDisplay}" Style="{StaticResource MutedText}" FontSize="12" TextWrapping="NoWrap" Margin="0,2,0,0" />
+      <TextBlock Text="{Binding SessionDisplay}" Style="{StaticResource MutedText}" FontSize="13" Margin="0,2,8,0" />
      </StackPanel>
      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
       <Button Content="관제 화면" Command="{Binding ShowDashboardCommand}" IsEnabled="{Binding IsLoggedIn}" Margin="0,0,8,0" />
       <Button Content="로그인 화면" Command="{Binding ShowLoginCommand}" IsEnabled="{Binding IsLoggedOut}" Margin="0,0,8,0" />
       <Button Content="로그아웃" IsEnabled="{Binding IsLoggedIn}" Click="Logout_Click" />
      </StackPanel>
-     <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="20,0,0,0" VerticalAlignment="Center">
-      <Button Content="■ 전체 공정 정지" IsEnabled="{Binding CurrentView.CanPause}" Click="Pause_Click" Background="#FFF0F2" Foreground="#AB2838"
+     <Grid Grid.Column="2" Margin="20,0,0,0" VerticalAlignment="Center">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Button Content="■ 전체 공정 정지" IsEnabled="{Binding CurrentView.CanPause, FallbackValue=False}" Click="Pause_Click" Background="#FFF0F2" Foreground="#AB2838"
         ToolTip="LINE·ARM·AGV 전체 정상 정지 요청. 완료는 각 장비 회신으로 확인합니다." />
-      <TextBlock Text="{Binding CurrentView.Summary}" Margin="12,0,0,0" Style="{StaticResource MutedText}" />
-     </StackPanel>
+      <TextBlock Grid.Column="1" Text="{Binding CurrentView.Summary, FallbackValue=''}" Margin="12,0,0,0" Style="{StaticResource MutedText}" />
+     </Grid>
     </Grid>
    </Border>
    <ContentControl Grid.Row="1" Content="{Binding CurrentView}" />

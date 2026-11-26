@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,8 +8,11 @@ from unittest.mock import patch
 
 from factory_v1.common import Fault,uid
 from factory_v1.contracts import event,device_status
-from raspi_line.adapter import LineAdapter
-from raspi_line.__main__ import create_app,deliver_once,validate_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from devices.line_pi.adapter import LineAdapter
+from devices.line_pi.serial_link import run_serial
+from devices.line_pi.__main__ import create_app,deliver_once,validate_config
 
 
 class Wire:
@@ -33,6 +37,32 @@ class LineTests(unittest.TestCase):
     def reply(self,command,state,detail):
         row=self.a.db.execute('SELECT * FROM commands WHERE command_id=?',(command['command_id'],)).fetchone()
         self.a.consume(f"R {row['sid']} {row['cyc']} {row['seq']} {state} {detail}\r\n".encode())
+
+    def test_boot_without_controller_leaves_uno_disarmed(self):
+        self.a.serial=None;self.a.synced=False
+        self.time+=60
+        self.assertEqual(self.client.get('/device/v1/status').status_code,401)
+        with patch('serial.Serial') as port, patch.object(self.a.stop,'wait',side_effect=(False,False,True)):
+            run_serial(self.a)
+        port.assert_not_called()
+        self.assertFalse(self.a.fault)
+        self.assertEqual(self.a.status()['state'],'UNKNOWN')
+
+    def test_authenticated_controller_can_wait_for_usb_to_appear(self):
+        self.a.serial=None;self.a.synced=False
+        self.assertEqual(self.client.get('/device/v1/status',headers=self.auth).status_code,200)
+        self.wire.incoming=f'V1 OK {self.a.sid}\n'.encode()
+        with (
+            patch('serial.Serial', side_effect=(OSError('port missing'), self.wire)) as port,
+            patch.object(self.a.stop, 'wait', side_effect=(False, False, False, True)),
+            self.assertLogs('mobot.line', level='WARNING'),
+        ):
+            run_serial(self.a)
+        self.assertEqual(port.call_count,2)
+        self.assertEqual(self.wire.writes[0],f'V1 SYNC {self.a.sid}\n'.encode())
+        self.assertFalse(any(line.startswith(b'C ') for line in self.wire.writes))
+        self.assertFalse(self.a.fault)
+        self.assertEqual(self.a.status()['state'],'IDLE')
 
     def test_live_completion_sequence_and_qr_gate(self):
         first=self.command();result=self.a.submit(first,self.a.boot);self.assertEqual(result['state'],'ACCEPTED')

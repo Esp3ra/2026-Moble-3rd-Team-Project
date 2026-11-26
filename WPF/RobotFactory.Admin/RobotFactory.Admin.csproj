@@ -9,7 +9,7 @@
     <RootNamespace>RobotFactory.Admin</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="ViewModels\EquipmentViewModel.cs;ViewModels\AgvViewModel.cs" />
+
     <RuntimeHostConfigurationOption Include="Switch.System.Windows.Diagnostics.DisableDiagnostics" Value="true" />
   </ItemGroup>
 </Project>

@@ -35,7 +35,11 @@ internal static class ApiConnection
             try
             {
                 var content = await response.Content.ReadFromJsonAsync<ApiError>(cancellationToken);
-                reason = content?.Error;
+                reason = content?.Message ?? content?.Error;
+                if (!string.IsNullOrWhiteSpace(content?.Code) && !string.IsNullOrWhiteSpace(reason))
+                    reason += $" [{content.Code}]";
+                if (!string.IsNullOrWhiteSpace(content?.Retry) && !string.IsNullOrWhiteSpace(reason))
+                    reason += $" · {content.Retry}";
             }
             catch (JsonException) { }
             catch (NotSupportedException) { }
@@ -44,5 +48,5 @@ internal static class ApiConnection
         return new HttpRequestException(message, null, response.StatusCode);
     }
 
-    private sealed record ApiError(string? Error);
+    private sealed record ApiError(string? Message, string? Code, string? Retry, string? Error);
 }

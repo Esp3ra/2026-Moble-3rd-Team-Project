@@ -20,22 +20,16 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - run: python -m pip install -r requirements-dev.txt -r pallet_system_uno_sim/requirements.txt
+      - run: python -m pip install -r requirements-dev.txt
       - run: python -B -m unittest discover -s tests
-      - run: python -B -m unittest discover -s tests
-        working-directory: demos/mobot/pallet_system_uno_sim
       - run: python -B scripts/check_openapi.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: python -B scripts/check_lan_transport.py
       - run: dotnet build ../../WPF/RobotFactory.sln -c Release --nologo
       - run: dotnet run --project ../../WPF/RobotFactory.Regression -c Release
-      - run: python -B scripts/check_conveyor_firmware.py
       - uses: arduino/setup-arduino-cli@v2
         with:
           version: '1.6.0'
       - run: arduino-cli core update-index
       - run: arduino-cli core install arduino:avr@1.8.8
       - run: python -B scripts/check_uno_firmware.py
-      - run: arduino-cli compile --fqbn arduino:avr:uno firmware/MobotWirelessBench
-      - run: arduino-cli compile --fqbn arduino:avr:uno pallet_system_uno_sim/firmware/RobotWorkSimulation

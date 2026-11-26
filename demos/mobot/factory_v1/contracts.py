@@ -11,6 +11,12 @@ EVENT_RULES={
  'UNLOAD_FINISHED':('AGV','UNLOAD',{'destination':(3,4,5,6,7),'fork_target_deg':60,'fork_moving':False}),
  'STANDBY_RETURNED':('AGV','RETURN_STANDBY',{'station':2,'fork_target_deg':85,'fork_moving':False})}
 PAUSED={'LINE':{'belt_output_stopped':True,'actuator_output_stopped':True},'ARM':{'arm_motion_stopped':True},'AGV':{'drive_stopped':True,'fork_motion_stopped':True}}
+REFRESH_CAPABILITY = 'CAM2_PLACEMENT_REFRESH_V1'
+PARTS = ('HEAD', 'LEFT', 'RIGHT')
+
+
+def valid_order(parts):
+    return isinstance(parts, list) and len(parts) == 3 and all(parts.count(part) == 1 for part in PARTS)
 
 
 def fixed(data,fields):
@@ -22,7 +28,9 @@ def fixed(data,fields):
 
 
 def device_status(data,device=None):
-    object_fields(data,('device_id','boot_id','mode','state','cycle_id','active_command_id','last_completed_command_id','observed_at','online'))
+    object_fields(data,('device_id','boot_id','mode','state','cycle_id','active_command_id','last_completed_command_id','observed_at','online'),('capabilities',))
+    if 'capabilities' in data:
+        require(data['device_id']=='ARM' and data['capabilities'] in ([],[REFRESH_CAPABILITY]),'장비 기능 목록 오류')
     require(data['device_id'] in DEVICES and (device is None or data['device_id']==device),'장비 ID가 다릅니다.',403,'FORBIDDEN')
     identifier(data['boot_id'])
     require(data['mode'] in ('AUTO','MANUAL') and data['state'] in ('IDLE','BUSY','PAUSED','FAULT','UNKNOWN'),'장비 상태 코드 오류')
@@ -49,12 +57,17 @@ def pose_set(data):
     names=('head_pick','head_place','left_pick','left_place','right_pick','right_place')
     object_fields(data['points'],names)
     for pose in data['points'].values():
-        object_fields(pose,('frame','tool_frame','calibration_id','x_mm','y_mm','z_mm','rx_deg','ry_deg','rz_deg','captured_at'))
-        require(pose['frame']=='ROBOT_BASE' and pose['tool_frame']=='GRIP_CENTER','좌표 기준 오류',422,'STALE_CALIBRATION')
-        text(pose['calibration_id'],100)
-        utc(pose['captured_at'])
-        for key in ('x_mm','y_mm','z_mm','rx_deg','ry_deg','rz_deg'):
-            require(type(pose[key]) in (int,float) and __import__('math').isfinite(pose[key]),'좌표 값 오류')
+        validate_pose(pose)
+
+
+def validate_pose(pose):
+    axes=('x_mm','y_mm','z_mm','rx_deg','ry_deg','rz_deg')
+    object_fields(pose,('frame','tool_frame','calibration_id','captured_at',*axes))
+    require(pose['frame']=='ROBOT_BASE' and pose['tool_frame']=='GRIP_CENTER','좌표 기준 오류',422,'STALE_CALIBRATION')
+    text(pose['calibration_id'],100)
+    utc(pose['captured_at'])
+    for key in axes:
+        require(type(pose[key]) in (int,float) and __import__('math').isfinite(pose[key]),'좌표 값 오류')
 
 
 def command(data):
@@ -63,12 +76,17 @@ def command(data):
     require(data['device_id'] in DEVICES,'장비 ID 오류')
     if data['cycle_id'] is not None:identifier(data['cycle_id'])
     action=data['action']
-    expected={rule[1]:rule[0] for rule in EVENT_RULES.values()}
+    expected={rule[1]:rule[0] for event,rule in EVENT_RULES.items() if event!='INSPECTION_ARRIVED'}
     require(action in (*expected,'PAUSE','RESUME'),'동작 코드 오류')
     if action in expected:
         require(data['device_id']==expected[action] and data['cycle_id'] is not None,'동작 대상 또는 회차 오류',422,'CONFLICT')
     params=data['params']
-    if action=='ASSEMBLE':pose_set(params)
+    if action=='ASSEMBLE':
+        if isinstance(params,dict) and 'pose_policy' in params:
+            object_fields(params,('pose_policy','part_order','initial_poses'))
+            require(params['pose_policy']=='REFRESH_BETWEEN_PARTS' and valid_order(params['part_order']),'부품 장착 정책 또는 순서 오류')
+            pose_set(params['initial_poses'])
+        else:pose_set(params)
     elif action in ('DELIVER','UNLOAD'):
         object_fields(params,('destination','inspection_id'))
         require(type(params['destination']) is int and params['destination'] in (3,4,5,6,7),'목적지 오류')
@@ -77,6 +95,14 @@ def command(data):
         object_fields(params,('pause_command_id',));identifier(params['pause_command_id'])
     else:object_fields(params,())
     return data
+
+
+def placement(data):
+    object_fields(data,('cycle_id','part','camera_id','frame_id','place'))
+    identifier(data['cycle_id'])
+    require(data['part'] in PARTS and data['camera_id']=='cam2','CAM2 또는 부품 오류')
+    require(isinstance(data['frame_id'],str) and bool(data['frame_id']),'촬영 ID 오류')
+    validate_pose(data['place'])
 
 
 def vision(data):
@@ -103,7 +129,13 @@ def event(data):
     for key in ('cycle_id','command_id'):
         if data[key] is not None:identifier(data[key])
     kind=data['kind'];detail=data['data']
-    if kind in EVENT_RULES:
+    if kind=='ARM_PLACEMENT_REQUESTED':
+        require(data['device_id']=='ARM' and data['cycle_id'] and data['command_id'],'ARM 회차·명령이 필요합니다.')
+        object_fields(detail,('completed_parts','next_part','gripper_clear'))
+        done=detail['completed_parts']
+        require(isinstance(done,list) and len(done)<=2 and all(p in PARTS and done.count(p)==1 for p in done),'장착 완료 순서 오류')
+        require(detail['next_part'] in PARTS and detail['next_part'] not in done and detail['gripper_clear'] is True,'다음 부품·집게 상태 오류')
+    elif kind in EVENT_RULES:
         device,_,fields=EVENT_RULES[kind]
         require(data['device_id']==device and data['cycle_id'] is not None and data['command_id'] is not None,'완료 이벤트의 장비·회차·명령 오류',422,'CONFLICT')
         fixed(detail,fields)
@@ -136,10 +168,9 @@ def inspect_result(value,expected,pallet,hub):
               for slot,key in [('head','target_head_id'),('left','target_arm_l_id'),('right','target_arm_r_id')])
     if missing:reasons.append('PART_MISSING')
     if wrong:reasons.append('WRONG_PART')
-    if value['qr_read'] is None:reasons.append('QR_UNREADABLE')
-    elif value['qr_read']!=pallet:reasons.append('QR_MISMATCH')
+    if value['qr_read'] is not None and value['qr_read']!=pallet:reasons.append('QR_MISMATCH')
     if unknown:reasons.append('OCCLUDED')
-    if missing:return 'PART_MISSING',reasons,6
-    if wrong or 'QR_MISMATCH' in reasons:return 'MISMATCH',reasons,7
-    if reasons:return 'INDETERMINATE',reasons,7
+    if missing:return 'PART_MISSING',reasons,None
+    if wrong or 'QR_MISMATCH' in reasons:return 'MISMATCH',reasons,None
+    if reasons:return 'INDETERMINATE',reasons,None
     return 'PASS',[],hub
