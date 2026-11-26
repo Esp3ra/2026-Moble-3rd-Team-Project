@@ -1,14 +1,14 @@
 # MOBOT 프로젝트 파일 트리
 
-팀원이 기능을 맡았을 때 어느 장비의 어떤 파일에서 작업할지 찾는 안내다. 첫 통합은 서버·웹의 `demos/mobot/`, 관리자 앱의 `WPF/`, UNO의 `firmware/`, AGV의 `AGV/` 경로를 그대로 사용한다. 두 Raspberry Pi에 배포할 새 제어 코드는 `devices/` 아래에서 장비별로 나눈다.
+팀원이 기능을 맡았을 때 어느 장비의 어떤 파일에서 작업할지 찾는 안내다. 메인 PC의 서버·구매 웹·조립 비전은 `server/mobot/`, 관리자 앱은 `WPF/`, UNO는 `firmware/`, AGV는 `AGV/`에서 개발한다. 두 Raspberry Pi에 배포할 새 제어 코드는 `devices/` 아래에서 장비별로 나눈다.
 
 ## 최종 개발 트리
 
-2026-11-23 기준이다. 공통 문서는 `main`, 제품 파일은 `Alpha`에서 관리한다. 각 파트는 아래 경로의 파일에서 개발을 시작한다. 이름만 마련한 소스 파일은 비어 있으며, 현재 구현이 있는 팀원 PR은 담당 표에 표시했다.
+2026-11-26 기준이다. 공통 문서는 `main`, 제품 파일은 `Alpha`에서 관리한다. 각 파트는 아래 경로의 파일에서 개발을 시작한다. 이름만 마련한 소스 파일은 비어 있으며, 현재 구현이 있는 팀원 PR은 담당 표에 표시했다.
 
 ```text
 3차 팀 프로젝트/
-├─ demos/
+├─ server/
 │  └─ mobot/  메인 Windows PC
 │     ├─ assembly_vision/  좌표 보정·정차 중 검사
 │     │  ├─ training/
@@ -112,7 +112,7 @@
 
 ### 구매 웹 · 업무 서버 · SQLite
 
-메인 Windows PC의 `demos/mobot/` 기준이다. Alpha에서 웹·API·SQL 파일을 열 수 있다. 설정 예제에는 치환용 값이 들어 있다. 웹·서버 구현은 [서버·웹 PR #13](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/pull/13)에 있다.
+메인 Windows PC의 `server/mobot/` 기준이다. Alpha에서 웹·API·SQL 파일을 열 수 있다. 설정 예제에는 치환용 값이 들어 있다. 웹·서버 구현은 [서버·웹 PR #13](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/pull/13)에 있다.
 
 | 폴더 또는 파일 | 여기에 넣을 부분 |
 |---|---|
@@ -130,7 +130,7 @@
 
 ### 카메라 2 좌표 보정 · 완성품 검사
 
-메인 PC의 [demos/mobot/assembly_vision/](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/tree/Alpha/demos/mobot/assembly_vision) 기준이다. 다음 표는 뼈대에 실제 알고리즘을 채울 위치를 정한다.
+메인 PC의 [server/mobot/assembly_vision/](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/tree/Alpha/server/mobot/assembly_vision) 기준이다. 다음 표는 뼈대에 실제 알고리즘을 채울 위치를 정한다.
 
 | Alpha 파일 | 구현할 함수와 결과 |
 |---|---|
