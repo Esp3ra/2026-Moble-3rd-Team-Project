@@ -10,7 +10,7 @@
 3차 팀 프로젝트/
 ├─ demos/
 │  └─ mobot/  메인 Windows PC
-│     ├─ assembly_vision/  좌표 보정·암실 검사
+│     ├─ assembly_vision/  좌표 보정·정차 중 검사
 │     │  ├─ training/
 │     │  │  ├─ LABELS.md
 │     │  │  └─ train.py
@@ -125,10 +125,10 @@
 | `factory_v1/contracts.py` | 장치 상태·명령·이벤트·작업 좌표·검사 DTO를 검증한다. 검사 관측값을 주문 사양과 대조해 판정·목적지를 계산한다. |
 | `factory_v1/engine.py` | 수락순 대기열에서 한 회차를 시작하고 QR 배정, 공정 단계 전이, 장치 명령·이벤트 대조, 검사 및 복귀 완료를 기록한다. |
 | `factory_v1/devices.py` | 메인 PC에서 LINE·ARM·AGV로 명령을 보내고 상태·결과·이벤트를 조회한다. 같은 인터페이스의 모의 장치도 여기서 연결한다. |
-| `factory_v1/vision.py` | 메인 PC가 카메라를 열고 프레임을 공급한다. CAM1 투입 QR, CAM2 위치 보정, CAM3 QR·완성품 검사, CAM4 실시간 관제의 진입점이다. |
+| `factory_v1/vision.py` | 메인 PC가 카메라를 열고 프레임을 공급한다. CAM1 투입 QR, CAM2 위치 보정, 검사 영상 취득(카메라·촬영 위치 미정), CAM4 실시간 관제의 진입점이다. |
 | `tests/` | 서버·웹·공정 엔진의 반복 가능한 검증. PR의 `tests/test_factory_v1.py`는 v1 API·공정 검증 위치다. |
 
-### 카메라 2 좌표 보정 · 카메라 3 완성품 검사
+### 카메라 2 좌표 보정 · 완성품 검사
 
 메인 PC의 [demos/mobot/assembly_vision/](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/tree/Alpha/demos/mobot/assembly_vision) 기준이다. 다음 표는 뼈대에 실제 알고리즘을 채울 위치를 정한다.
 
@@ -136,8 +136,8 @@
 |---|---|
 | `plugin.pyi` | 서버가 호출하는 두 함수의 키워드 인자와 반환 형식을 확인하는 타입 명세다. 실행 시 카메라 연결은 서버가 맡는다. |
 | `calibration.py` | Python/OpenCV로 CAM2의 `locate_assembly`를 구현한다. 주문별 고정 슬롯 집기 자세와 몸통 ArUco 기준 장착 자세를 `PoseSet`으로 반환한다. 같은 모듈에서 `inspection.py`의 `inspect_product`도 가져와 공개한다. |
-| `inspection.py` | CAM3의 `inspect_product`를 구현한다. 같은 프레임에서 읽은 팔레트 QR과 머리·왼팔·오른팔 관측값을 `VisionInspection`으로 반환한다. |
-| `training/train.py` | CAM3 학습 진입점. 데이터셋 분할, 학습 호출, 평가 결과와 모델 버전 기록을 담당한다. |
+| `inspection.py` | 검사 카메라의 `inspect_product`를 구현한다. 해당 회차의 머리·왼팔·오른팔 관측값과 검사 프레임에서 읽은 경우의 QR을 `VisionInspection`으로 반환한다. |
+| `training/train.py` | 완성품 검출 모델 학습 진입점. 데이터셋 분할, 학습 호출, 평가 결과와 모델 버전 기록을 담당한다. |
 | `training/LABELS.md` | 학습 모델 클래스 ID와 머리 H1·H2, 왼팔 L1~L3, 오른팔 R1~R3의 대응 및 평가 기준을 기록한다. |
 
 두 함수 구현이 끝나면 서버의 `vision_module`에 `assembly_vision.calibration`을 지정한다. 서버가 모듈 하나에서 두 함수를 찾으므로 현재 배치로 연결할 수 있다. 뼈대 단계의 카메라 2·3 실물 인식은 미구현 상태다.
@@ -170,17 +170,18 @@ WPF 연동 변경은 같은 루트 솔루션을 사용하는 [PR #10](https://gi
 | 로봇 내장 Pi | `devices/mycobot_pi/adapter.py` | ARM 명령·상태·이벤트. 주문 사양·좌표를 조립 절차에 전달하고 대기 자세 도착을 보고한다. | Alpha |
 | 로봇 내장 Pi | `devices/mycobot_pi/assembly.py` | 그리퍼 열기·집기·이동·장착·대기 자세 복귀와 실제 작업 결과 확인 | Alpha |
 | 메인 PC | `AGV/device_adapter.py`, `AGV/agv_client.py` | AGV 연결 모듈과 ESP32 통신 클라이언트. 서버 명령을 주행·지게 동작으로 연결하고 상태를 돌려준다. | 파일명은 Alpha, 구현은 [PR #12](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/pull/12) |
-| ESP32 AGV | `AGV/AgvRouteTest/AgvRouteTest.ino` | 라인트레이싱, 인수·검사 정차·목적지 이동, 지게 상승·하강과 복귀. AGV 통신·펌웨어 검증은 `AGV/tests/`가 맡는다. | 파일명은 Alpha, 구현은 [PR #12](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/pull/12) |
+| ESP32 AGV | `AGV/AgvRouteTest/AgvRouteTest.ino` | 라인트레이싱, 인수·목적지 이동, 지게 상승·하강과 복귀. AGV 통신·펌웨어 검증은 `AGV/tests/`가 맡는다. | 파일명은 Alpha, 구현은 [PR #12](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/pull/12) |
 
 ### 공정 사이에서 넘겨야 하는 결과
 
 | 단계 | 다음 동작을 시작하는 조건 |
 |---|---|
 | 구매 → 수락 → 투입 | 업무 서버가 주문을 저장하고 WPF 수락 순서대로 한 번에 한 장을 투입한다. |
-| 배출 → 최초 이송 | CAM1 QR과 이번 회차의 주문·팔레트 배정 저장이 모두 성공해야 벨트를 출발시킨다. 판독은 2초 간격으로 총 3회까지 시도한다. 저장만 실패하면 같은 배정을 재시도한다. |
-| IR1 정차 → 조립 → 이송 재개 | 정차 확인 후 CAM2가 작업 좌표를 구한다. 부품 사이에는 `engine.py`가 새 CAM2 프레임에서 다음 장착점만 골라 ARM에 전달하고, ARM의 `adapter.py`가 대기점과 중복 여부를 확인한다. 마지막 부품 장착 후 팔의 대기 자세 도착 이벤트를 받아 벨트를 재가동한다. |
-| IR2 정차 → 인수 → 검사 | 벨트 끝 정차 확인 후 AGV가 인수한다. 적재한 AGV의 암실 도착 완료 보고를 받아 CAM3로 촬영한다. |
-| 검사 → 하역 → 다음 주문 | 서버가 관측값을 대조해 정상은 서울 3·대전 4·천안 5번, 부품 누락은 6번, 그 밖의 불일치·판정 불가는 7번으로 보낸다. 판정 불가는 WPF에 즉시 표시한다. 하역 뒤 AGV가 2번에 정차하고 지게가 85°로 복귀하면 다음 주문을 투입한다. |
+| 배출 → 최초 이송 → IR1 정차 | 배출 완료 후 벨트를 출발시키고 IR1 감지 후 설정 시간만큼 더 이송해 정차한다. |
+| IR1 정차 → QR 배정 → 조립 | CAM1 판독 및 주문·팔레트 배정 저장 후 CAM2 보정과 조립을 지시한다. 판독 실패는 2초 간격 총 3회, 저장 실패는 같은 배정 저장만 재시도한다. |
+| 조립 → 검사·재작업 | 장착 완료 및 대기 복귀 후 정차 중 YOLO 검사. 결함은 같은 회차에서 재작업·재검사하고 시도별 이력을 보존한다. |
+| 합격 저장 → IR2 정차 → 인수 | 합격 저장 뒤 벨트를 재출발하고 IR2 감지 후 설정 시간만큼 더 이송해 정차한 뒤 AGV를 호출한다. |
+| 인수 → 하역 → 복귀 | 정상 HUB 3·4·5번으로 배송한다. 서버는 회차·명령별 완료를 대조하고 하역 뒤 AGV 2번 정차·지게 85° 복귀 확인 후 다음 주문을 투입한다. |
 
 ### 규약 · 시험 · 저장소 관리
 
@@ -188,5 +189,5 @@ WPF 연동 변경은 같은 루트 솔루션을 사용하는 [PR #10](https://gi
 |---|---|
 | [하드웨어 공정](HARDWARE_WORKFLOW.md), [팀 규약](프로젝트_전체규약_팀답변_공유본.md) | 장치별 역할, 12단계 순서와 예외 처리에 관한 팀 결정 |
 | [공통 통신 규약](통신규약/공통_통신규약과_DTO.md), [OpenAPI](통신규약/openapi.yaml) | 공통 명령·이벤트의 의미, API 경로와 요청·응답 DTO의 원본 |
-| [tests/integration/SCENARIOS.md](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/blob/Alpha/tests/integration/SCENARIOS.md) | 정상 HUB 3개, 오류 구역 2개, 예외 5개의 통합 시험 절차와 기대 결과. 실물 시험 때 회차·근거 로그와 실제 결과를 남긴다. |
+| [tests/integration/SCENARIOS.md](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/blob/Alpha/tests/integration/SCENARIOS.md) | 정상 HUB 3개, 재작업·재검사 2종, 예외 5개의 통합 시험 절차와 기대 결과. 실물 시험 때 회차·근거 로그와 실제 결과를 남긴다. |
 | [README.md](../README.md), [AGENTS.md](../AGENTS.md), `scripts/`, `.github/` | 저장소 시작 안내, 협업 규칙, 정책 검사와 GitHub Actions |
