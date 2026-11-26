@@ -5,7 +5,7 @@
 
 구매 웹·관리자 WPF와 장비는 메인 PC를 통해 주문형 로봇을 조립·검사·이송합니다. 개발 시 [공정·통신·DTO 기준 문서](docs/HARDWARE_WORKFLOW.md)를 확인합니다.
 
-파트별 소스 배치와 파일별 담당 기능은 [프로젝트 파일 트리](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/blob/main/docs/PROJECT_TREE.md)에서 확인합니다.
+메인 PC의 업무 서버·구매 웹·조립 비전 소스는 [server/mobot/](server/mobot/)에 있습니다. 파트별 소스 배치와 파일별 담당 기능은 [프로젝트 파일 트리](https://github.com/Esp3ra/2026-Moble-3rd-Team-Project/blob/main/docs/PROJECT_TREE.md)에서 확인합니다.
 
 ## 브랜치와 버전
 
