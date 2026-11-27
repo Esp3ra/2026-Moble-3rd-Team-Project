@@ -1,7 +1,7 @@
 # WPF 관리자 · 공통 통신 규약 v0.3.0
 
 
-메인 PC에서 [Start-MOBOT.cmd](Start-MOBOT.cmd)를 실행해 업무 서버를 엽니다. [서버 설치와 장비 연결](../demos/mobot/README.md)을 참고하세요. `dotnet build WPF/RobotFactory.sln -c Release` 후 관리자 앱을 실행하고 내부 서버 주소와 기존 계정으로 로그인합니다.
+메인 PC에서 [Start-MOBOT.cmd](Start-MOBOT.cmd)를 실행해 업무 서버를 엽니다. [서버 설치와 장비 연결](../server/mobot/README.md)을 참고하세요. `dotnet build WPF/RobotFactory.sln -c Release` 후 관리자 앱을 실행하고 내부 서버 주소와 기존 계정으로 로그인합니다.
 
 상단에는 팔레트 배출 → QR 인식 → 조립/검사 → AGV 인수 → AGV 하역 완료를 표시합니다. IR2 정차 후 AGV가 인수 명령을 접수하면 인수 단계를 표시합니다. 네 칸의 실시간 관제에는 CAM1 QR ROI, CAM2 조립, CAM3 YOLO, CAM4 전체 영상이 표시됩니다.
 

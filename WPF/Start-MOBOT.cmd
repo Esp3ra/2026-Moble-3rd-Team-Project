@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d "%~dp0..\demos\mobot" || exit /b 1
+cd /d "%~dp0..\server\mobot" || exit /b 1
 
 if not defined MOBOT_PYTHON set "MOBOT_PYTHON=%LOCALAPPDATA%\MOBOT\.venv\Scripts\python.exe"
 if not exist "%MOBOT_PYTHON%" (

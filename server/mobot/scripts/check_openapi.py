@@ -17,7 +17,7 @@ from test_factory_v1 import FactoryTests
 from factory_v1.common import uid
 from factory_v1.account_policy import ACCOUNT_DISPLAY_NAME_MAX,ACCOUNT_DISPLAY_NAME_RESPONSE_MAX
 
-REVISION='727133b935cb94fe39fed2e6a2634fade284e60c'
+REVISION='e59dd0e021046e738c9aa41d7016e9dda6763cdd'
 
 
 def main():
