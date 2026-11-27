@@ -8,4 +8,8 @@
     <AssemblyName>RobotFactory.Admin</AssemblyName>
     <RootNamespace>RobotFactory.Admin</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Diagnostics.DisableDiagnostics" Value="true" />
+  </ItemGroup>
 </Project>

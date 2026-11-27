@@ -1,0 +1,17 @@
+{
+  "serial_port": "/dev/serial/by-id/REPLACE_WITH_UNO_ID",
+  "baudrate": 115200,
+  "listen_host": "127.0.0.1",
+  "listen_port": 8101,
+  "controller_token": "",
+  "server_url": "https://REPLACE_INTERNAL_MAIN_SERVER",
+  "device_token": "",
+  "internal_networks": ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+  "journal_path": "line-journal.sqlite3",
+  "hardware_profile_approved": false,
+  "heartbeat_interval_seconds": null,
+  "serial_response_timeout_seconds": null,
+  "controller_timeout_seconds": null,
+  "tls_certificate": null,
+  "tls_private_key": null
+}
