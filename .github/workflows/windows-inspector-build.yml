@@ -2,11 +2,11 @@ name: Windows inspector build and test
 on:
   push:
     paths:
-      - 'demos/mobot/assembly_vision/windows_inspector/**'
+      - 'server/mobot/assembly_vision/windows_inspector/**'
       - '.github/workflows/windows-inspector-build.yml'
   pull_request:
     paths:
-      - 'demos/mobot/assembly_vision/windows_inspector/**'
+      - 'server/mobot/assembly_vision/windows_inspector/**'
       - '.github/workflows/windows-inspector-build.yml'
 permissions:
   contents: read
@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 10
     defaults:
       run:
-        working-directory: demos/mobot/assembly_vision/windows_inspector
+        working-directory: server/mobot/assembly_vision/windows_inspector
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
