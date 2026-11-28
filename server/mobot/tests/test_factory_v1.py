@@ -338,6 +338,92 @@ class FactoryTests(unittest.TestCase):
             self.assertIsNone(row['image']);self.assertIsNone(result['image_ref'])
             self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='MOVE_TO_PICKUP' OR device_id='AGV'").fetchone()[0],0)
 
+    def test_ambiguous_torso_holds_inspection_and_never_queues_pickup(self):
+        import json
+        from unittest.mock import Mock
+
+        import numpy as np
+
+        from assembly_vision.inspection import AutomaticInspector
+        from test_auto_assembly_inspection import PARTS, draw_scene
+
+        frame = draw_scene()
+        # The repeated lower-body texture produces equal match peaks 20 pixels apart.
+        stripe = np.random.default_rng(12).integers(40, 220, (frame.shape[0] - 218, 20, 1), dtype=np.uint8)
+        frame[218:] = np.tile(stripe, (1, frame.shape[1] // 20, 3))
+        detector = Mock(version="test")
+        detector.detect.return_value = PARTS
+        inspector = AutomaticInspector(detector, frame)
+
+        def inspect(data):
+            result = inspector.inspect_product(
+                cycle_id=data["cycle_id"], inspection_id=data["inspection_id"], frame=frame,
+                frame_id=data["frame_id"], captured_at=data["captured_at"], qr_read=data["qr_read"],
+            )
+            data.update({slot: result[slot] for slot in ("head", "left", "right")})
+
+        self.engine.vision.inspection_override = inspect
+        order, _ = self.order(right="R3")
+        self.accept(order)
+        self.start()
+        self.tick(80)
+        with closing(connect(self.path)) as db:
+            row = db.execute("SELECT body,vision FROM V1_INSPECTIONS").fetchone()
+            result, evidence = json.loads(row["body"]), json.loads(row["vision"])
+            self.assertEqual((result["verdict"], result["dispatch_station"]), ("INDETERMINATE", None))
+            self.assertEqual([evidence[slot]["observation"] for slot in ("head", "left", "right")], ["UNKNOWN"] * 3)
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='MOVE_TO_PICKUP'").fetchone()[0], 0)
+
+    def test_cam1_start_requires_reference_dimensions_and_does_not_require_cam3(self):
+        import time
+        from unittest.mock import Mock
+
+        import cv2
+        import numpy as np
+
+        from assembly_vision.inspection import AutomaticInspector
+        from test_auto_assembly_inspection import PARTS, draw_scene
+
+        vision = self.engine.vision
+        vision.simulation = False
+        vision.plugin = Mock()
+        vision.profile = dict(
+            approved=True, calibration_id="test", pose_max_age_ms=100,
+            bounds=dict.fromkeys(("x_mm", "y_mm", "z_mm", "rx_deg", "ry_deg", "rz_deg"), [-1, 1]),
+            part_order=["HEAD", "LEFT", "RIGHT"],
+        )
+        vision.config.update(inspection_camera="cam1", auto_inspection=True, vision_profile_approved=True)
+        raw = cv2.rotate(draw_scene(), cv2.ROTATE_90_COUNTERCLOCKWISE)
+        detector = Mock(version="test")
+        detector.detect.return_value = PARTS
+        vision.auto_inspector = AutomaticInspector(detector, raw, rotation=90)
+        order, _ = self.order()
+        self.accept(order)
+
+        def capture(camera, frame):
+            vision.frames[camera] = (time.monotonic(), frame, uid(), now())
+
+        for camera in ("cam2", "cam4"):
+            capture(camera, raw)
+        capture("cam1", np.zeros((440, 380, 3), dtype=np.uint8))
+        self.assertFalse(vision.inspection_ready())
+        self.assertEqual(self.engine.plant()["state"], "NOT_READY")
+        start = self.client.post("/api/v1/plant/actions", json=dict(request_id=uid(), action="START"), headers=self.auth)
+        self.assertEqual(start.status_code, 503)
+        with closing(connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='DISPENSE'").fetchone()[0], 0)
+        capture("cam1", raw)
+        self.assertTrue(vision.inspection_ready())
+
+        with patch.dict(vision.config, {"inspection_camera": "cam3"}):
+            self.assertEqual(self.engine.plant()["state"], "NOT_READY")
+        plant = self.engine.plant()
+        self.assertEqual(plant["state"], "READY")
+        self.assertFalse(plant["camera_ready"]["cam3"])
+        self.start()
+        with closing(connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM V1_COMMANDS WHERE action='DISPENSE'").fetchone()[0], 1)
+
     def test_rework_keeps_separate_attempts_and_only_a_saved_pass_enables_pickup(self):
         observations=[]
         def inspect(data):

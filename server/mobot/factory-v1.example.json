@@ -9,6 +9,8 @@
   "controller_token": "REPLACE_LOCAL_ADAPTER_KEY",
   "camera_indices": {"cam1": null, "cam2": null, "cam3": null, "cam4": null},
   "inspection_camera": null,
+  "auto_inspection": false,
+  "inspection_rotation": 0,
   "vision_module": null,
   "vision_profile_approved": false,
   "calibration_profile": {"approved": false, "part_order": []}

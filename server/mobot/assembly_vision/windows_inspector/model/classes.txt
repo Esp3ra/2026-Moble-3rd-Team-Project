@@ -1,0 +1,8 @@
+lime_dual_camera_head
+yellow_infrared_monoeye_head
+left_blue_gripper_arm
+right_blue_gripper_arm
+left_orange_welding_arm
+right_orange_welding_arm
+left_red_fastening_arm
+right_red_fastening_arm

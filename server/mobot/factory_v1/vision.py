@@ -17,6 +17,14 @@ class PcVision:
         except ImportError:self.plugin=None
         self.profile=self.config.get('calibration_profile',{})
         self.qr=QrRoi(self,Path(app.config.get('ORDER_DB','unused.sqlite3')).parent/'qr-roi.json')
+        self.auto_inspector=None
+        if not self.simulation and self.inspection_camera=='cam1' and self.config.get('vision_profile_approved') is True:
+            try:
+                from assembly_vision.inspection import AutomaticInspector
+                self.auto_inspector=AutomaticInspector.from_directory(
+                    self.qr.path.parent/'assembly-vision', rotation=self.config.get('inspection_rotation',0))
+            except Exception:
+                app.logger.exception('CAM1 automatic inspection could not load the model or reference')
 
     def start(self):
         if self.simulation:return
@@ -91,12 +99,19 @@ class PcVision:
     @property
     def inspection_camera(self):
         camera=self.config.get('inspection_camera')
+        if camera=='cam1' and self.config.get('auto_inspection') is True:return camera
         return 'cam3' if camera=='cam3' else None
 
     def inspection_ready(self):
         if self.simulation:return True
-        return bool(self.inspection_camera and self.plugin and self.config.get('vision_profile_approved') is True
-                    and hasattr(self.plugin,'inspect_product') and self.ready()[self.inspection_camera])
+        camera=self.inspection_camera
+        if not camera or self.config.get('vision_profile_approved') is not True:return False
+        if camera=='cam1':
+            with self.lock:
+                sample=self.frames.get(camera)
+                return bool(self.auto_inspector is not None and sample and time.monotonic()-sample[0]<2
+                            and self.auto_inspector.accepts_frame(sample[1]))
+        return getattr(self.plugin,'inspect_product',None) is not None and self.ready()[camera]
 
     def read_feed_qr(self,cycle,read_id,attempt,sample=None):
         if self.simulation:
@@ -161,7 +176,12 @@ class PcVision:
             if self.inspection_override:self.inspection_override(data)
         else:
             require(self.inspection_ready(),'승인된 검사 카메라와 비전 프로필이 필요합니다.',503,'DEVICE_UNAVAILABLE')
-            data=self.plugin.inspect_product(cycle_id=cycle,inspection_id=inspection,camera_id=camera,frame=frame,frame_id=frame_id,captured_at=captured)
+            if camera=='cam1':
+                qr=self.qr.read_now((frame,frame_id,captured))
+                data=self.auto_inspector.inspect_product(cycle_id=cycle,inspection_id=inspection,frame=frame,
+                    frame_id=frame_id,captured_at=captured,qr_read=qr['pallet_id'])
+            else:
+                data=self.plugin.inspect_product(cycle_id=cycle,inspection_id=inspection,camera_id=camera,frame=frame,frame_id=frame_id,captured_at=captured)
         require(data['frame_id']==frame_id and data['captured_at']==captured,'동일 프레임 검사 결과가 아닙니다.',409,'CONFLICT')
         with self.lock:self.images[data['image_ref']]=cv2.imencode('.jpg',frame)[1].tobytes()
         return data
