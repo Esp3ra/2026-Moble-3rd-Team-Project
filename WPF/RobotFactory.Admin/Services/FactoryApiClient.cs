@@ -36,6 +36,7 @@ public sealed record StockV1(string StockKey,int AvailableUnits);
 public sealed record StockPageV1(List<StockV1> Items,string? NextCursor);
 public sealed record AccountPageV1(List<AdminAccount> Accounts,string? NextCursor);
 public sealed record TicketV1(string RequestId,string State,string PlantState);
+public sealed record ManualResultV1(Guid CommandId,string DeviceId,string State);
 public sealed record QrTicketV1(Guid? RequestId,Guid? CycleId,string State,Guid? ReadId);
 public sealed record HistoryV1(string RecordId,string OrderId,string? CycleId,string? CommandId,string? InspectionId,DateTimeOffset RecordedAt,string Stage,string Kind,string Message)
 {
@@ -53,6 +54,7 @@ public sealed class FactoryApiClient
     public FactoryApiClient(HttpClient? client=null){Client=client ?? SharedClient;}
     public static readonly JsonSerializerOptions Json=new(){PropertyNamingPolicy=JsonNamingPolicy.SnakeCaseLower};
     public string Environment {get;private set;}="HARDWARE";
+    public string TrialProfile {get;private set;}="";
     public async Task<T> RequestAsync<T>(Uri server,string token,string path,object? body,CancellationToken cancellation,HttpMethod? method=null)
     {
         using var request=new HttpRequestMessage(method ?? (body is null ? HttpMethod.Get:HttpMethod.Post),new Uri(server,"/api/v1/"+path));
@@ -60,6 +62,7 @@ public sealed class FactoryApiClient
         if(body is not null)request.Content=JsonContent.Create(body);
         using var response=await Client.SendAsync(request,cancellation);
         if(response.Headers.TryGetValues("X-Mobot-Environment",out var values))Environment=values.First();
+        TrialProfile=response.Headers.TryGetValues("X-Mobot-Trial",out var trials) ? trials.First() : "";
         if(!response.IsSuccessStatusCode)
         {
             throw await ApiConnection.CreateErrorAsync(response,$"서버 요청 실패 (HTTP {(int)response.StatusCode})",cancellation);
@@ -73,6 +76,7 @@ public sealed class FactoryApiClient
             AdminOrderV1 order=>OrderValid(order),
             QrTicketV1 ticket=>ticket.RequestId.HasValue && ticket.CycleId.HasValue && ticket.ReadId.HasValue &&
                 ticket.State is "ACCEPTED" or "RUNNING" or "COMPLETED" or "FAILED" or "STOPPED" or "UNKNOWN",
+            ManualResultV1 manual=>manual.CommandId!=Guid.Empty && manual.DeviceId=="AGV" && manual.State is "ACCEPTED" or "RUNNING" or "COMPLETED" or "FAILED" or "STOPPED" or "UNKNOWN",
             OrderPageV1 page=>page.Orders is not null && page.Orders.All(OrderValid),
             PalletPageV1 page=>page.Pallets is not null && page.Pallets.All(p=>p is not null && !string.IsNullOrEmpty(p.PalletId)),
             PlantV1 plant=>plant.Devices is not null && plant.Devices.All(d=>d is not null && d.DeviceId is "LINE" or "ARM" or "AGV") && plant.CameraReady is not null && new[]{"cam1","cam2","cam3","cam4"}.All(plant.CameraReady.ContainsKey),

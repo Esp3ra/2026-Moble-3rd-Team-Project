@@ -19,7 +19,7 @@ static class Program
         var exit=0;
         dispatcher.BeginInvoke(async()=>
         {
-            try {CheckRotation();await Run();await RunQr();await RunReadOnlyQr();await RunStandardCameraQr();await RunVideoMapping();await RunPlant();await RunQrTickets();Console.WriteLine("WPF regression: dashboard, QR ROI, video mapping and v1 plant progress passed (mock HTTP, no hardware).");}
+            try {CheckRotation();await Run();await RunQr();await RunReadOnlyQr();await RunStandardCameraQr();await RunVideoMapping();await RunPlant();await RunQrTickets();await RunMixedTrial();Console.WriteLine("WPF regression: dashboard, QR ROI, video mapping, plant and mixed trial passed (mock HTTP, no hardware).");}
             catch(Exception error){Console.Error.WriteLine(error);exit=1;}
             finally{dispatcher.BeginInvokeShutdown(DispatcherPriority.Background);}
         });
@@ -35,6 +35,40 @@ static class Program
         Check(Math.Abs(a.X-source.X)<1e-9 && Math.Abs(a.Y-source.Bottom)<1e-9 && Math.Abs(b.X-source.Right)<1e-9 && Math.Abs(b.Y-source.Y)<1e-9,"rotated selection maps back to original ROI");
         var bounds=VideoOrientation.ImageBounds(new Size(1000,500),1920,1080);
         Check(Math.Abs(bounds.Height-500)<1e-9 && Math.Abs(bounds.Width-281.25)<1e-9 && Math.Abs(bounds.X-359.375)<1e-9,"portrait rotated image letterbox geometry");
+    }
+    static async Task RunMixedTrial()
+    {
+        using var wire=new MockServer();using var http=new HttpClient(wire);
+        var view=new DashboardViewModel(new FactoryApiClient(http)){AdminToken="test-only"};
+        try
+        {
+            await view.StartAsync();
+            Check(!view.IsMixedTrial && !view.CanRunMixedTrial,"production never exposes trial controls");
+            await view.StartMixedTrialAsync();Check(wire.Posts==0,"trial action is blocked in production");
+            wire.MixedTrial=true;await view.RefreshAsync();
+            Check(view.IsMixedTrial && view.EnvironmentLabel.Contains("YOLO 모의"),"mixed trial is explicitly labelled");
+            var beforeRecovery=wire.Posts;
+            await view.RecoverStandbyAsync();Check(wire.Posts==beforeRecovery,"operator physical standby confirmation is required");
+            wire.DropRecoveryReply=true;view.StandbyConfirmed=true;await view.RecoverStandbyAsync();
+            await view.RecoverStandbyAsync();
+            Check(wire.RecoveryRequests.Count==2 && wire.RecoveryRequests[0]==wire.RecoveryRequests[1],"recovery retries keep the original UUID after response loss");
+            Check(!view.StandbyConfirmed && view.ActionStatus.Contains("복구 완료"),"manual completion is queried and physical confirmation is cleared");
+            wire.TrialPaths.Clear();
+            wire.DropTrialReply=true;
+            view.SelectedTrialDestination=view.TrialDestinations[0];await view.StartMixedTrialAsync();
+            var first=wire.TrialRequests.Single();
+            Check(!view.CanSelectTrialDestination && view.CanRunMixedTrial,"lost submission reply retains the same pending trial");
+            view.SelectedTrialDestination=view.TrialDestinations[2];await view.StartMixedTrialAsync();
+            Check(wire.TrialRequests[1]==first && wire.TrialStations.SequenceEqual(new[]{3,3}),"retry preserves UUID and captured destination");
+            foreach(var target in view.TrialDestinations.Skip(1))
+            {view.SelectedTrialDestination=target;await view.StartMixedTrialAsync();}
+            Check(wire.TrialStations.SequenceEqual(new[]{3,3,4,5}),"three destination selections map to existing order address rules");
+            Check(wire.LastAction=="START" && wire.TrialPaths.All(p=>p=="orders" || p.EndsWith("/accept") || p=="plant/actions"),"trial uses existing order/approval/plant endpoints only");
+            wire.State="RUNNING";wire.CycleId=Guid.NewGuid().ToString();await view.RefreshAsync();
+            Check(!view.CanRunMixedTrial,"active cycle blocks another trial");
+            Check(!view.CanRecoverStandby,"active cycle blocks idle reset");
+        }
+        finally{view.Stop();}
     }
     static async Task RunVideoMapping()
     {
@@ -259,6 +293,12 @@ sealed class MockServer:HttpMessageHandler
     public double[] Roi=[0,0,1,1];
     public bool Unauthorized;
     public bool VideoReady;
+    public bool MixedTrial,DropTrialReply;
+    public bool DropRecoveryReply;
+    public List<Guid> RecoveryRequests=[];
+    public List<Guid> TrialRequests=[];
+    public List<int> TrialStations=[];
+    public List<string> TrialPaths=[];
     public bool AgvAccepted;
     public bool StandardCameraOnly,MissingRoiStatus;
     public bool DropQrPostReply;
@@ -330,6 +370,24 @@ sealed class MockServer:HttpMessageHandler
         else if(request.Method!=HttpMethod.Get)
         {
             Posts++;LastPostPath=path;data=new{};
+            if(MixedTrial)TrialPaths.Add(path);
+            if(MixedTrial && path=="manual-actions")
+            {
+                using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
+                RecoveryRequests.Add(body.RootElement.GetProperty("request_id").GetGuid());
+                if(DropRecoveryReply){DropRecoveryReply=false;throw new HttpRequestException("manual reply lost");}
+                data=new{command_id="00000000-0000-4000-8000-000000000099",device_id="AGV",state="ACCEPTED"};status=HttpStatusCode.Accepted;
+            }
+            if(MixedTrial && path=="orders")
+            {
+                using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
+                var input=body.RootElement;TrialRequests.Add(input.GetProperty("request_id").GetGuid());
+                var address=input.GetProperty("address").GetString()!;
+                var station=address.StartsWith("서울")?3:address.StartsWith("대전")?4:5;TrialStations.Add(station);
+                if(DropTrialReply){DropTrialReply=false;throw new HttpRequestException("reply lost after trial submission");}
+                data=new{order_id="00000000-0000-4000-8000-000000000001",target_station=station};status=HttpStatusCode.Created;
+            }
+            if(MixedTrial && path.EndsWith("/accept"))data=new{order_id="00000000-0000-4000-8000-000000000001",spec=new{target_head_id="H1",target_arm_l_id="L1",target_arm_r_id="R2"},factory_status="QUEUED"};
             if(path=="plant/actions")
             {
                 using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellation));
@@ -339,6 +397,7 @@ sealed class MockServer:HttpMessageHandler
             }
         }
         else if(path.StartsWith("plant/actions/"))data=new{request_id=path.Split('/').Last(),state="COMPLETED",plant_state=State};
+        else if(path.StartsWith("manual-actions/"))data=new{command_id=path.Split('/').Last(),device_id="AGV",state="COMPLETED"};
         else data=path switch
         {
             "orders"=>new{orders=new[]{new{order_id="00000000-0000-4000-8000-000000000001",spec=new{target_head_id="H1",target_arm_l_id="L1",target_arm_r_id="R1"},company=Company,phone="test",address="test",target_station=3,cycle_id=HistoricalOrderCycle,pallet_id=HistoricalOrderCycle is null ? null : "PALLET-08",factory_status=HistoricalOrderCycle is null ? "PENDING" : "COMPLETED",created_at=DateTimeOffset.UtcNow,updated_at=DateTimeOffset.UtcNow}},next_cursor=(string?)null},
@@ -350,6 +409,7 @@ sealed class MockServer:HttpMessageHandler
             _=>new{events=Array.Empty<object>(),next_cursor=(string?)null}
         };
         var result=new HttpResponseMessage(status){Content=new StringContent(JsonSerializer.Serialize(data),Encoding.UTF8,"application/json")};
-        result.Headers.Add("X-Mobot-Environment",EnvironmentName);return result;
+        result.Headers.Add("X-Mobot-Environment",EnvironmentName);
+        if(MixedTrial)result.Headers.Add("X-Mobot-Trial","LINE_AGV_MIXED_V1");return result;
     }
 }

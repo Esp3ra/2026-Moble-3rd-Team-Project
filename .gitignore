@@ -1,6 +1,8 @@
 # Local secrets and data; keep sanitized examples and SQL source under version control.
 .env
 .env.*
+AGV/AgvRouteTest/agv_secrets.h
+.pr-submission/
 !.env.example
 !.env.*.example
 *.pem

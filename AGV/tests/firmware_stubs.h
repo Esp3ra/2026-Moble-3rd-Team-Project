@@ -6,6 +6,13 @@
 #include <map>
 #include <utility>
 #include "ControlSession.h"
+#include "WifiDiagnostics.h"
+#define RTC_NOINIT_ATTR
+using arduino_event_id_t = int;
+struct arduino_event_info_t { struct { int reason = 0; } wifi_sta_disconnected; };
+constexpr int ARDUINO_EVENT_WIFI_STA_DISCONNECTED = 1;
+constexpr int ARDUINO_EVENT_WIFI_STA_GOT_IP = 2;
+constexpr int ARDUINO_EVENT_WIFI_STA_LOST_IP = 3;
 #define AGV_DEVICE_KEY "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 #include <array>
 #include <atomic>
@@ -14,6 +21,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
+#include <cerrno>
 using portMUX_TYPE = int;
 constexpr int portMUX_INITIALIZER_UNLOCKED = 0;
 void portENTER_CRITICAL(int*) {}
@@ -42,6 +50,7 @@ constexpr int WL_CONNECTED = 1;
 struct {
     bool connected = true;
     int status() { return connected ? WL_CONNECTED : 0; }
+    int RSSI() { return -56; }
     int localIP() { return 0; }
 } WiFi;
 std::vector<uint32_t> servoDuties;
@@ -145,3 +154,51 @@ int httpd_ws_recv_frame(httpd_req_t* request,httpd_ws_frame_t* frame,size_t size
 }
 int httpd_ws_send_frame(httpd_req_t*,httpd_ws_frame_t*) {return ESP_OK;}
 const char CONTROL_PAGE[]="", RC_PAGE[]="";
+
+using httpd_handle_t = void*;
+struct httpd_config_t {
+    bool lru_purge_enable = false;
+    uint16_t max_uri_handlers = 8;
+    esp_err_t (*open_fn)(httpd_handle_t, int) = nullptr;
+};
+constexpr int IPPROTO_TCP = 6, TCP_NODELAY = 1;
+int configuredTcpSocket = -1, configuredTcpNoDelay = 0;
+bool tcpOptionFailure = false;
+esp_err_t (*httpSocketOpen)(httpd_handle_t, int) = nullptr;
+int setsockopt(int socket, int level, int option, const void* value, unsigned size) {
+    assert(level == IPPROTO_TCP && option == TCP_NODELAY && size == sizeof(int));
+    configuredTcpSocket = socket;
+    configuredTcpNoDelay = *static_cast<const int*>(value);
+    if (tcpOptionFailure) { errno = 5; return -1; }
+    return 0;
+}
+httpd_config_t HTTPD_DEFAULT_CONFIG() { return {}; }
+struct httpd_uri_t {
+    const char* uri;
+    int method;
+    esp_err_t (*handler)(httpd_req_t*);
+    void* user_ctx;
+    bool is_websocket = false;
+};
+bool httpStartFailure = false, httpStopped = false;
+int httpRegistrationFailureIndex = -1;
+unsigned httpConfiguredLimit = 0;
+std::vector<std::string> httpRegisteredRoutes;
+const char* esp_err_to_name(esp_err_t error) { return error == ESP_OK ? "ESP_OK" : "TEST_ERROR"; }
+esp_err_t httpd_start(httpd_handle_t* handle, const httpd_config_t* config) {
+    httpRegisteredRoutes.clear();
+    httpConfiguredLimit = config->max_uri_handlers;
+    httpSocketOpen = config->open_fn;
+    httpStopped = false;
+    if (httpStartFailure) return ESP_FAIL;
+    *handle = &httpConfiguredLimit;
+    return ESP_OK;
+}
+esp_err_t httpd_register_uri_handler(httpd_handle_t, const httpd_uri_t* route) {
+    if (httpRegisteredRoutes.size() >= httpConfiguredLimit ||
+            static_cast<int>(httpRegisteredRoutes.size()) == httpRegistrationFailureIndex) return ESP_FAIL;
+    httpRegisteredRoutes.push_back(route->uri);
+    return ESP_OK;
+}
+esp_err_t httpd_stop(httpd_handle_t) { httpStopped = true; return ESP_OK; }
+uint32_t esp_random() { return 42; }

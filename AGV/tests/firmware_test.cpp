@@ -17,6 +17,8 @@ httpd_req_t request(bool authorized = true, const char* controller = OWNER) {
 void fixture() {
     ms += 10000;
     controlSession = ControlSession(CONTROL_KEY, SERVER_HEARTBEAT_TIMEOUT_MS);
+    wifiDiagnostics.begin(1, ms, false);
+    lastDiagnosticSerialSequence = 0;
     pendingCommand.store(0);
     pendingOperationId[0] = activeOperationId[0] = '\0';
     strcpy(deviceBootId, "d7645267-f6a5-42f9-9918-5a591ea74301");
@@ -453,7 +455,119 @@ void lineLossAndCancelTests() {
     puts("10-second forward/reverse/turn loss, reacquisition, pause timer, and legacy inspection cancellation passed.");
 }
 
+void diagnosticsTests() {
+    WifiDiagnostics::Store storage{};
+    WifiDiagnostics diagnostics(storage);
+    diagnostics.begin(1, 5, false);
+    diagnostics.setRssi(-57);
+    diagnostics.record(WifiDiagnostics::Disconnected, 100, 201);
+    auto snapshot = diagnostics.snapshot();
+    assert(snapshot.count == 2 && snapshot.boot_number == 1);
+    assert(WifiDiagnostics::oldest(snapshot, 1).reason == 201);
+    assert(WifiDiagnostics::oldest(snapshot, 1).rssi_dbm == -57);
+    diagnostics.begin(3, 0, true);
+    snapshot = diagnostics.snapshot();
+    assert(snapshot.boot_number == 2 && snapshot.count == 3);
+    assert(snapshot.last_rssi_dbm == WifiDiagnostics::UNKNOWN_RSSI);
+    assert(WifiDiagnostics::oldest(snapshot, 1).boot_number == 1);
+    for (unsigned i = 0; i < 30; ++i) diagnostics.record(WifiDiagnostics::LostIp, i);
+    snapshot = diagnostics.snapshot();
+    assert(snapshot.count == 24);
+    for (unsigned i = 1; i < snapshot.count; ++i)
+        assert(WifiDiagnostics::oldest(snapshot, i).sequence == WifiDiagnostics::oldest(snapshot, i-1).sequence + 1);
+    diagnostics.begin(9, 0, false); // Power/brownout: do not claim RTC retention.
+    assert(diagnostics.snapshot().count == 1 && diagnostics.snapshot().boot_number == 1);
+
+    fixture();
+    wifiDiagnostics.setRssi(-56);
+    arduino_event_info_t info{};
+    info.wifi_sta_disconnected.reason = 202;
+    onAgvWifiEvent(ARDUINO_EVENT_WIFI_STA_DISCONNECTED, info);
+    onAgvWifiEvent(ARDUINO_EVENT_WIFI_STA_GOT_IP, info);
+    onAgvWifiEvent(ARDUINO_EVENT_WIFI_STA_LOST_IP, info);
+    auto unauthorized = request(false);
+    showDiagnostics(&unauthorized);
+    assert(unauthorized.status == "401 Unauthorized");
+    const auto oldCommand = pendingCommand.load();
+    const auto oldCount = wifiDiagnostics.snapshot().count;
+    auto read = request();
+    ms += SERVER_HEARTBEAT_TIMEOUT_MS + 1;
+    showDiagnostics(&read);
+    assert(read.status == "200 OK");
+    assert(read.body.find("WIFI_DISCONNECTED") != std::string::npos);
+    assert(read.body.find("\"reason\":202") != std::string::npos);
+    assert(read.body.find(CONTROL_KEY) == std::string::npos);
+    assert(wifiDiagnostics.snapshot().count == oldCount && pendingCommand.load() == oldCommand);
+    assert(!sessionConnected(ms)); // A diagnostics read did not renew the lease.
+    updateControlWatchdog(ms);
+    snapshot = wifiDiagnostics.snapshot();
+    assert(WifiDiagnostics::oldest(snapshot, snapshot.count-1).kind == WifiDiagnostics::HeartbeatExpired);
+    const auto countAfterExpiry = snapshot.count;
+    updateControlWatchdog(ms);
+    assert(wifiDiagnostics.snapshot().count == countAfterExpiry);
+    fixture();
+    controlSession.revoke(); // Explicit Wi-Fi/control revocation is not heartbeat expiry.
+    updateControlWatchdog(ms);
+    snapshot = wifiDiagnostics.snapshot();
+    assert(snapshot.count == 1);
+    puts("Diagnostics: ring wrap, warm boot, power reset, event reasons/RSSI, auth, read-only access and expiry attribution passed.");
+}
+
+void httpStartupTests() {
+    fixture();
+    httpStartFailure = false;
+    httpRegistrationFailureIndex = -1;
+    assert(startControlServer());
+    assert(httpRegisteredRoutes.size() == 18);
+    assert(httpConfiguredLimit == httpRegisteredRoutes.size());
+    assert(httpSocketOpen != nullptr);
+    tcpOptionFailure = false;
+    assert(httpSocketOpen(nullptr, 73) == ESP_OK);
+    assert(configuredTcpSocket == 73 && configuredTcpNoDelay == 1);
+    tcpOptionFailure = true;
+    assert(httpSocketOpen(nullptr, 74) == ESP_FAIL);
+    tcpOptionFailure = false;
+    assert(!httpStopped);
+    assert(std::find(httpRegisteredRoutes.begin(), httpRegisteredRoutes.end(), "/diagnostics") != httpRegisteredRoutes.end());
+    assert(std::find(httpRegisteredRoutes.begin(), httpRegisteredRoutes.end(), "/stop") != httpRegisteredRoutes.end());
+    httpRegistrationFailureIndex = 17;
+    assert(!startControlServer());
+    assert(httpStopped); // A partial server must never be left running.
+    httpRegistrationFailureIndex = -1;
+    httpStartFailure = true;
+    assert(!startControlServer());
+    assert(!httpStopped && httpRegisteredRoutes.empty());
+    httpStartFailure = false;
+    puts("HTTP startup: all 18 real routes register, capacity matches, and startup/registration failures clean up correctly.");
+}
+
+void bootStandbyTests() {
+    fixture();
+    controlSession = ControlSession(CONTROL_KEY, SERVER_HEARTBEAT_TIMEOUT_MS);
+    location = NO_NODE;
+    publish(State::Unknown);
+    const auto oldServoWrites = servoDuties.size();
+    initializeBootStandby();
+    assert(state == State::Ready && location == POINT_2 && destination == NO_NODE);
+    assert(motorLeft == 0 && motorRight == 0 && pendingCommand.load() == 0);
+    assert(!forkMoving.load() && servoDuties.size() == oldServoWrites);
+    assert(!sessionConnected(ms));
+    auto status = request();
+    showStatus(&status);
+    assert(status.body.find("\"position\":2") != std::string::npos);
+    assert(status.body.find("\"control_connected\":false") != std::string::npos);
+    state = State::Moving; // A lost position during travel must stay unknown.
+    stopTrip(State::LineLost);
+    assert(location == NO_NODE && motorLeft == 0 && motorRight == 0);
+    loop();
+    assert(location == NO_NODE); // A fault must not restore the boot default.
+    puts("Boot standby: point 2/ready with motors stopped, no control claim or movement; faults retain unknown position.");
+}
+
 int main() {
+    bootStandbyTests();
+    httpStartupTests();
+    diagnosticsTests();
     controlAndTimeoutTests();
     websocketTests();
     inspectionAndRouteTests();
