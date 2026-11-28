@@ -40,6 +40,8 @@ public partial class DashboardView:UserControl
   qrRoiWindow.Closed+=(_,_)=>{qrRoiWindow=null;UpdateQrPreview();};qrRoiWindow.Show();
  }
  private DashboardViewModel? Model=>DataContext as DashboardViewModel;
+ private async void MixedTrial_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.StartMixedTrialAsync();}
+ private async void RecoverStandby_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.RecoverStandbyAsync();}
  private async void Reconcile_Click(object s,RoutedEventArgs e){if(Model is {} m)await m.ReconcileAsync();}
  private async void Image_Click(object s,RoutedEventArgs e){if(Model is {} m && await m.InspectionImageAsync() is {} image)new Window{Title="보관 검사 사진",Width=900,Height=700,Owner=Window.GetWindow(this),Content=new Image{Source=image,Stretch=System.Windows.Media.Stretch.Uniform}}.Show();}
  private async void DeleteImage_Click(object s,RoutedEventArgs e){if(Model is {} m && MessageBox.Show(Window.GetWindow(this),"선택한 보관 검사 사진을 삭제할까요?","사진 삭제",MessageBoxButton.YesNo)==MessageBoxResult.Yes)await m.DeleteImageAsync();}

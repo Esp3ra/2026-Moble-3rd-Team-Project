@@ -7,6 +7,7 @@ from .vision import PcVision
 from .api import create_api
 from orders import initialize_orders
 from server_paths import instance_directory
+from .mixed_trial import enabled as mixed_enabled, MixedTrialVision
 
 
 def install(app):
@@ -21,7 +22,9 @@ def install(app):
     app.config['V1_BACKGROUND']=os.environ.get('MOBOT_V1_BACKGROUND','1')=='1'
     mode=app.config['V1_MODE']
     require(mode in ('HARDWARE','SIMULATION'),'MOBOT_V1_MODE 설정 오류')
-    scope='SIMULATION' if mode=='SIMULATION' else 'PRODUCTION'
+    mixed=mixed_enabled(settings,mode,path,instance_directory()/'mobot.sqlite3')
+    app.config['V1_MIXED_TRIAL']=mixed
+    scope='MIXED_TRIAL' if mixed else 'SIMULATION' if mode=='SIMULATION' else 'PRODUCTION'
     if mode=='SIMULATION':
         require(os.environ.get('MOBOT_DB') and path!=(instance_directory()/'mobot.sqlite3').resolve(),
                 '모의 검증은 명시한 별도 DB만 사용합니다.',409,'CONFLICT')
@@ -39,9 +42,13 @@ def install(app):
     clients={device:SimDevice(device) for device in DEVICES} if mode=='SIMULATION' else {
         device:HttpDevice(device,config) for device,config in settings.get('devices',{}).items() if device in DEVICES
     }
-    vision=PcVision(app,app.config['V1_MODE']=='SIMULATION')
+    if mixed:clients['ARM']=SimDevice('ARM');clients['ARM'].delay=3
+    vision=MixedTrialVision(app) if mixed else PcVision(app,app.config['V1_MODE']=='SIMULATION')
     worker=Engine(app,clients,vision)
     app.extensions['factory_v1']=worker
+    if mixed:
+        from .trial_recovery import TrialRecovery
+        app.extensions['mixed_trial_recovery']=TrialRecovery(worker)
     app.register_blueprint(create_api())
     if mode=='SIMULATION':
         app.register_blueprint(create_adapter_api())

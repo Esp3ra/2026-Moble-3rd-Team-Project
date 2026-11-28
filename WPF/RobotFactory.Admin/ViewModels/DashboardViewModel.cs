@@ -15,6 +15,7 @@ using RobotFactory.Admin.Services;
 namespace RobotFactory.Admin.ViewModels;
 
 public sealed record ConveyorStep(string Label,bool Active,bool Completed);
+public sealed record TrialDestination(int Station,string Label,string Address);
 
 public sealed class DashboardViewModel : INotifyPropertyChanged
 {
@@ -54,6 +55,27 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     private string actionStatus="제작 수락 후 전체 준비 상태를 확인하세요.";
     private string? completedConveyorCycle;
     private readonly Dictionary<string,Guid> requestIds=[];
+    private sealed class MixedRequest(TrialDestination destination)
+    {
+        public TrialDestination Destination {get;}=destination;
+        public Guid SubmitId {get;}=Guid.NewGuid();
+        public Guid AcceptId {get;}=Guid.NewGuid();
+        public Guid StartId {get;}=Guid.NewGuid();
+    }
+    private MixedRequest? mixedRequest;
+    private Guid? recoveryRequest,recoveryCommand;
+    private string? recoveryReason;
+    public bool StandbyConfirmed {get;set;}
+    public bool CanRecoverStandby=>IsMixedTrial && connected && !busy && Plant?.CycleId is null &&
+        Plant?.State is "READY" or "NOT_READY" or "RECOVERY_REQUIRED" &&
+        Plant.Devices.Any(d=>d.DeviceId=="LINE" && d.Online && d.State=="IDLE" && d.ActiveCommandId is null);
+    public IReadOnlyList<TrialDestination> TrialDestinations {get;}=[new(3,"3번 서울 HUB","서울특별시 중구 시험"),new(4,"4번 대전 HUB","대전광역시 유성구 시험"),new(5,"5번 천안 HUB","충청남도 천안시 시험")];
+    public TrialDestination? SelectedTrialDestination {get;set;}
+    public bool IsMixedTrial=>api.TrialProfile=="LINE_AGV_MIXED_V1";
+    public bool CanRunMixedTrial=>IsMixedTrial && connected && !busy && (mixedRequest is not null ||
+        Plant is {State:"READY",CycleId:null} && !Orders.Any(o=>o.FactoryStatus is "QUEUED" or "IN_PROGRESS"));
+    public bool CanSelectTrialDestination=>IsMixedTrial && !busy && mixedRequest is null;
+    public string MixedTrialButtonLabel=>mixedRequest is null ? "선택 목적지로 실장비 시험 시작" : "같은 시험 요청 접수 확인";
     private AdminOrderV1? selected;
     public string ServerAddress {get;set;}=Environment.GetEnvironmentVariable("MOBOT_API_URL") ?? "http://127.0.0.1:8000";
     public string AdminToken {get;set;}="";
@@ -76,7 +98,7 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     public string ActionStatus {get=>qrActionStatus is null ? actionStatus : $"{actionStatus}\n{qrActionStatus}";private set=>actionStatus=value;}
     private bool IsSimulation => api.Environment=="SIMULATION";
     public bool IsConveyorTrial { get; init; }
-    public string EnvironmentLabel => IsConveyorTrial ? "컨베이어 시험 · 시험 주문" :
+    public string EnvironmentLabel => IsMixedTrial ? "실장비 혼합시험 · LINE/AGV 실물 · 조립/YOLO 모의" : IsConveyorTrial ? "컨베이어 시험 · 시험 주문" :
         IsSimulation ? "모의 검증 · 실물 장비 미사용" : "실물 모드 · 준비·완료 증거 확인";
     public string StartButtonText => IsConveyorTrial ? "처음부터 시작" : "자동 운전 시작";
     public string QrPanelTitle => "CAM 01 · QR 판독 ROI";
@@ -249,6 +271,7 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     public DashboardViewModel(FactoryApiClient? client=null)
     {
         api=client ?? new();
+        SelectedTrialDestination=TrialDestinations[0];
         timer.Tick+=async(_,_)=>await RefreshAsync();
     }
     public async Task StartAsync()
@@ -271,7 +294,7 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     public void ClearSession()
     {
         Stop();AdminToken="";Orders.Clear();Pallets.Clear();Stock.Clear();History.Clear();Accounts.Clear();SelectedOrder=null;
-        Cam1=Cam2=Cam3=Cam4=null;Plant=null;requestIds.Clear();NotifyAll();
+        Cam1=Cam2=Cam3=Cam4=null;Plant=null;requestIds.Clear();mixedRequest=null;recoveryRequest=recoveryCommand=null;recoveryReason=null;StandbyConfirmed=false;NotifyAll();
     }
     private static void Replace<T>(ObservableCollection<T> target,IEnumerable<T> values)
     {
@@ -291,6 +314,7 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         if(polling is null)return;
         var cancellation=polling.Token;
         await Task.WhenAll(RefreshSnapshotsAsync(),CheckQrRetryAsync(cancellation));
+        await CheckStandbyRecoveryAsync(cancellation);
     }
 
     private async Task RefreshSnapshotsAsync()
@@ -446,6 +470,76 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
         finally{busy=false;NotifyAll();}
     }
     public Task AcceptAsync()=>CanAccept && selected is { } order ? ActAsync("accept:"+order.OrderId,async(id,ct)=>{await api.RequestAsync<AdminOrderV1>(new Uri(ServerAddress),AdminToken,$"orders/{order.OrderId}/accept",new{request_id=id},ct);ActionStatus="제작 수락을 저장했습니다.";}):Task.CompletedTask;
+    public async Task RecoverStandbyAsync()
+    {
+        if(!CanRecoverStandby || polling is null)return;
+        if(recoveryCommand is not null){await CheckStandbyRecoveryAsync(polling.Token);return;}
+        if(!StandbyConfirmed){ActionStatus="AGV 실제 2번·무적재·컨베이어와 액추에이터 정지·컨베이어 비움을 확인하고 체크하세요.";NotifyAll();return;}
+        recoveryRequest ??= Guid.NewGuid();
+        recoveryReason ??= "작업자 확인: AGV 실제 2번·무적재, 컨베이어·액추에이터 모두 정지, 컨베이어 위 팔레트 없음. 활성 주문 없이 시험 대기 상태 복구 요청.";
+        var ct=polling.Token;busy=true;NotifyAll();
+        try
+        {
+            var result=await api.RequestAsync<ManualResultV1>(new Uri(ServerAddress),AdminToken,"manual-actions",
+                new{request_id=recoveryRequest,device_id="AGV",procedure_id="AGV_IDLE_STANDBY_RECOVERY_V1",reason=recoveryReason},ct);
+            ct.ThrowIfCancellationRequested();recoveryCommand=result.CommandId;
+            ActionStatus="대기 복구 접수 · 장치 상태 대조 중 · "+result.CommandId;
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){}
+        catch(Exception error)when(error is HttpRequestException or IOException or JsonException or OperationCanceledException)
+        {ActionStatus="대기 복구 확인 필요 · 같은 요청으로 다시 확인 · "+error.Message;if(error is HttpRequestException{StatusCode:HttpStatusCode.Unauthorized})SessionExpired?.Invoke();}
+        finally{busy=false;NotifyAll();}
+        await RefreshAsync();
+    }
+    private async Task CheckStandbyRecoveryAsync(CancellationToken ct)
+    {
+        if(recoveryCommand is not Guid command)return;
+        try
+        {
+            var result=await api.RequestAsync<ManualResultV1>(new Uri(ServerAddress),AdminToken,$"manual-actions/{command}",null,ct);
+            if(result.CommandId!=command)throw new JsonException("대기 복구 명령 ID가 다릅니다.");
+            ActionStatus=result.State switch {
+                "COMPLETED"=>"AGV 2번·지게 85° 대기 복구 완료 · 자동운전은 꺼진 상태입니다.",
+                "UNKNOWN"=>"복구 결과 미확정 · 현장 확인 필요 · "+command,
+                "FAILED" or "STOPPED"=>"복구 중단 · 현장 확인 필요 · "+command,
+                _=>"대기 복구 진행 중 · "+command};
+            if(result.State is "COMPLETED" or "FAILED" or "STOPPED" or "UNKNOWN")
+            {recoveryRequest=recoveryCommand=null;recoveryReason=null;StandbyConfirmed=false;}
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){}
+        catch(Exception error)when(error is HttpRequestException or IOException or JsonException or OperationCanceledException)
+        {ActionStatus="대기 복구 조회 필요 · "+error.Message;if(error is HttpRequestException{StatusCode:HttpStatusCode.Unauthorized})SessionExpired?.Invoke();}
+        finally{NotifyAll();}
+    }
+    public async Task StartMixedTrialAsync()
+    {
+        if(!CanRunMixedTrial || polling is null || SelectedTrialDestination is null)return;
+        mixedRequest ??= new(SelectedTrialDestination);
+        var trial=mixedRequest;
+        var ct=polling.Token;busy=true;NotifyAll();
+        try
+        {
+            var server=new Uri(ServerAddress);
+            var order=await api.RequestAsync<JsonElement>(server,AdminToken,"orders",new{
+                request_id=trial.SubmitId,company="실장비 혼합시험",phone="010-0000-0000",address=trial.Destination.Address,
+                spec=new{target_head_id="H1",target_arm_l_id="L1",target_arm_r_id="R2"},payment_method="card"},ct);
+            var orderId=order.GetProperty("order_id").GetString();
+            if(!Guid.TryParse(orderId,out _) || order.GetProperty("target_station").GetInt32()!=trial.Destination.Station)
+                throw new JsonException("시험 주문 ID 또는 목적지가 요청과 다릅니다.");
+            await api.RequestAsync<AdminOrderV1>(server,AdminToken,$"orders/{orderId}/accept",new{request_id=trial.AcceptId},ct);
+            var ticket=await api.RequestAsync<TicketV1>(server,AdminToken,"plant/actions",new{request_id=trial.StartId,action="START",reason="LINE/AGV 실물 · 조립/검사 모의 시험"},ct);
+            ct.ThrowIfCancellationRequested();ticketId=ticket.RequestId;mixedRequest=null;
+            ActionStatus=$"{trial.Destination.Label} 시험 접수 · 실제 완료 대기 · 조립/검사 모의";
+        }
+        catch(OperationCanceledException)when(ct.IsCancellationRequested){}
+        catch(Exception error)when(error is HttpRequestException or IOException or JsonException or OperationCanceledException)
+        {
+            ActionStatus="시험 요청 결과 확인 필요 · 같은 요청으로 접수 확인 · "+error.Message;
+            if(error is HttpRequestException{StatusCode:HttpStatusCode.Unauthorized})SessionExpired?.Invoke();
+        }
+        finally{busy=false;NotifyAll();}
+        await RefreshAsync();
+    }
     public Task CancelAsync()=>CanCancel && selected is { } order ? ActAsync("cancel:"+order.OrderId,async(id,ct)=>{await api.RequestAsync<AdminOrderV1>(new Uri(ServerAddress),AdminToken,$"orders/{order.OrderId}/cancel",new{request_id=id},ct);ActionStatus="주문 취소·재고 복구를 저장했습니다.";}):Task.CompletedTask;
     public Task PlantActionAsync(string action)
     {
@@ -550,6 +644,7 @@ public sealed class DashboardViewModel : INotifyPropertyChanged
     public Task DeleteImageAsync()=>Inspection?.ArchiveId is string record ? ActAsync("delete:"+record,async(id,ct)=>{await api.RequestAsync<JsonElement>(new Uri(ServerAddress),AdminToken,$"archive/{record}/delete",new{request_id=id,reason="관리자 보관 검사 사진 삭제"},ct);ActionStatus="보관 사진 삭제·감사 기록 완료";}):Task.CompletedTask;
     private void NotifyAll()
     {
+        foreach(var name in new[]{nameof(IsMixedTrial),nameof(CanRunMixedTrial),nameof(CanSelectTrialDestination),nameof(MixedTrialButtonLabel),nameof(CanRecoverStandby),nameof(StandbyConfirmed)})Notify(name);
         foreach(var name in new[]{nameof(HeaderDevices),nameof(ProcessDetail),nameof(ProcessSteps)})Notify(name);
         Notify(nameof(StartUnavailableReason));
         foreach(var name in new[]{nameof(AssemblyCameraTitle),nameof(InspectionCameraTitle),nameof(ProcessCaption)})Notify(name);

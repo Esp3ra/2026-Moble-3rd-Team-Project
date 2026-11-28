@@ -65,6 +65,8 @@ def create_api():
         response.headers['Cache-Control']='no-store'
         response.headers['X-Mobot-Contract']='0.3.0'
         response.headers['X-Mobot-Environment']=current_app.config['V1_MODE']
+        if current_app.config.get('V1_MIXED_TRIAL'):
+            response.headers['X-Mobot-Trial']='LINE_AGV_MIXED_V1'
         return response
 
     @api.errorhandler(Fault)
@@ -356,37 +358,8 @@ def create_api():
     @admin()
     def reconcile(command_id):
         data=body(('request_id','observation','reason'),('evidence_ref',))
-        identifier(command_id);text(data['reason'],300)
-        if 'evidence_ref' in data:text(data['evidence_ref'],256)
-        require(data['observation'] in ('COMPLETED','NOT_EXECUTED','UNRESOLVED'),'관측 코드 오류')
-        payload=dict(command_id=command_id,**data);scope='reconcile:'+g.account['account_id']
-        with transaction() as db:
-            prior=cached(db,scope,data['request_id'],payload)
-            if prior:return prior
-            row=db.execute('SELECT * FROM V1_COMMANDS WHERE command_id=?',(command_id,)).fetchone()
-            require(row is not None,'명령이 없습니다.',404,'NOT_FOUND')
-            plant=db.execute('SELECT * FROM V1_PLANT').fetchone()
-            require(plant['state']=='RECOVERY_REQUIRED' and row['state'] in ('UNKNOWN','FAILED','STOPPED','COMPLETED','RUNNING'),'현장 대조가 필요한 명령이 아닙니다.',409,'BAD_TRANSITION')
-            devices=engine().device_states(db)
-            available=len(devices)==len(engine().required_devices) and all(d['online'] and d['state'] in ('IDLE','PAUSED') and d['active_command_id'] is None for d in devices)
-            other_unknown=db.execute("SELECT 1 FROM V1_COMMANDS WHERE state IN('UNKNOWN','FAILED') AND command_id!=?",(command_id,)).fetchone()
-            resolved=False
-            if available:
-                if data['observation']=='COMPLETED' and row['state']=='COMPLETED' and row['result_event_id']:
-                    # Only an already received, typed device event may advance the stage.
-                    resolved=True
-                elif data['observation']=='NOT_EXECUTED' and row['state'] in ('UNKNOWN','FAILED'):
-                    db.execute("UPDATE V1_COMMANDS SET state='STOPPED',updated_at=? WHERE command_id=?",(now(),command_id))
-                    if row['action'] not in ('PAUSE','RESUME'):engine().queue(db,row['device_id'],row['cycle_id'],row['action'],json.loads(row['params']))
-                    resolved=True
-            if resolved and not other_unknown:
-                ticket=uid()
-                pause_ids={device:engine().queue(db,device,row['cycle_id'],'PAUSE',ticket=ticket) for device in engine().required_devices}
-                db.execute("INSERT INTO V1_TICKETS VALUES(?,'PLANT','ACCEPTED',?,NULL)",(ticket,row['cycle_id']))
-                db.execute("UPDATE V1_PLANT SET state='PAUSING',pause_ids=?,action_request=?,updated_at=? WHERE id=1",(dump(pause_ids),ticket,now()))
-            result=dict(command_id=command_id,resolution=data['observation'],requires_review=not resolved or bool(other_unknown),recorded_at=now())
-            db.execute('INSERT INTO V1_AUDIT VALUES(?,?,?,?,?)',(uid(),g.account['account_id'],'RECONCILE',dump(payload),now()))
-            return remember(db,scope,data['request_id'],payload,result)
+        from .reconciliation import reconcile as reconcile_command
+        return reconcile_command(engine(),g.account['account_id'],command_id,data)
 
     @api.post('/manual-actions')
     @admin()
@@ -394,12 +367,16 @@ def create_api():
         data=body(('request_id','device_id','procedure_id','reason'))
         identifier(data['request_id']);text(data['reason'],200);text(data['procedure_id'],64)
         require(data['device_id'] in DEVICES,'장비 ID 오류')
+        if current_app.config.get('V1_MIXED_TRIAL'):
+            return current_app.extensions['mixed_trial_recovery'].submit(g.account['account_id'],data)
         # No physical procedure or ownership handover has yet been approved by the team.
         raise Fault(503,'DEVICE_UNAVAILABLE','승인된 수동 절차·제어권 전환 프로필을 먼저 등록하세요.','OPERATOR')
 
     @api.get('/manual-actions/<command_id>')
     @admin()
     def manual_result(command_id):
+        if current_app.config.get('V1_MIXED_TRIAL'):
+            return current_app.extensions['mixed_trial_recovery'].result(command_id)
         identifier(command_id);raise Fault(404,'NOT_FOUND','수동 조작 요청이 없습니다.')
 
     @api.get('/settings/<device_id>')

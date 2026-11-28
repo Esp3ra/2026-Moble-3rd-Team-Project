@@ -40,6 +40,12 @@ GO_TO_INSPECTION은 지원하지 않습니다. 기존 서버 엔진은 연결 �
 #include <atomic>
 #include <esp_http_server.h>
 #include <esp_random.h>
+#include <esp_system.h>
+#include <esp_attr.h>
+#include <esp_err.h>
+#include <lwip/sockets.h>
+#include <cerrno>
+#include "WifiDiagnostics.h"
 #include "ControlSession.h"
 #if __has_include("agv_secrets.h")
 #include "agv_secrets.h"
@@ -48,8 +54,14 @@ GO_TO_INSPECTION은 지원하지 않습니다. 기존 서버 엔진은 연결 �
 #define AGV_DEVICE_KEY ""
 #endif
 
-constexpr char WIFI_SSID[] = "YOUR_WIFI_SSID";
-constexpr char WIFI_PASSWORD[] = "YOUR_WIFI_PASSWORD";
+#ifndef AGV_WIFI_SSID
+#define AGV_WIFI_SSID "YOUR_WIFI_SSID"
+#endif
+constexpr char WIFI_SSID[] = AGV_WIFI_SSID;
+#ifndef AGV_WIFI_PASSWORD
+#define AGV_WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+#endif
+constexpr char WIFI_PASSWORD[] = AGV_WIFI_PASSWORD;
 
 constexpr int MOTOR_RX = 16;
 constexpr char CONTROL_KEY[] = AGV_DEVICE_KEY;
@@ -268,6 +280,58 @@ bool pausedForkMoving = false;
 unsigned long pausedAt = 0;
 int pausedMotorLeft = 0;
 int pausedMotorRight = 0;
+
+RTC_NOINIT_ATTR WifiDiagnostics::Store wifiDiagnosticStore;
+WifiDiagnostics wifiDiagnostics(wifiDiagnosticStore);
+portMUX_TYPE diagnosticsLock = portMUX_INITIALIZER_UNLOCKED;
+uint32_t lastDiagnosticSerialSequence = 0;
+
+void recordDiagnostic(WifiDiagnostics::Kind kind, int reason = 0) {
+  portENTER_CRITICAL(&diagnosticsLock);
+  wifiDiagnostics.record(kind, millis(), reason);
+  portEXIT_CRITICAL(&diagnosticsLock);
+}
+
+void onAgvWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+  // Event callbacks run on another task. Only copy small records here; the
+  // main loop handles throttled serial output outside this callback.
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    recordDiagnostic(WifiDiagnostics::Disconnected, info.wifi_sta_disconnected.reason);
+  } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+    recordDiagnostic(WifiDiagnostics::GotIp);
+  } else if (event == ARDUINO_EVENT_WIFI_STA_LOST_IP) {
+    recordDiagnostic(WifiDiagnostics::LostIp);
+  }
+}
+
+void pollDiagnostics() {
+  static uint32_t lastSample = 0, lastPrint = 0;
+  const uint32_t now = millis();
+  if (now - lastSample >= 1000) {
+    lastSample = now;
+    if (WiFi.status() == WL_CONNECTED) {
+      const int rssi = WiFi.RSSI();
+      portENTER_CRITICAL(&diagnosticsLock);
+      wifiDiagnostics.setRssi(rssi);
+      portEXIT_CRITICAL(&diagnosticsLock);
+    }
+  }
+  if (now - lastPrint < 250) return;
+  lastPrint = now;
+  portENTER_CRITICAL(&diagnosticsLock);
+  const auto snapshot = wifiDiagnostics.snapshot();
+  portEXIT_CRITICAL(&diagnosticsLock);
+  for (unsigned i = 0; i < snapshot.count; ++i) {
+    const auto& event = WifiDiagnostics::oldest(snapshot, i);
+    if (event.sequence <= lastDiagnosticSerialSequence) continue;
+    lastDiagnosticSerialSequence = event.sequence;
+    Serial.printf("AGV_DIAG seq=%lu boot=%lu uptime_ms=%lu event=%s reason=%ld rssi_dbm=%ld reset_reason=%ld\n",
+      static_cast<unsigned long>(event.sequence), static_cast<unsigned long>(event.boot_number),
+      static_cast<unsigned long>(event.uptime_ms), WifiDiagnostics::name(event.kind),
+      static_cast<long>(event.reason), static_cast<long>(event.rssi_dbm), static_cast<long>(snapshot.reset_reason));
+    break; // At most one diagnostic line per 250 ms, never per HTTP request.
+  }
+}
 
 const char CONTROL_SCRIPT[] = R"JS(
 (() => {
@@ -995,6 +1059,16 @@ void publish(State next) {
     location + 1, destination + 1);
 }
 
+void initializeBootStandby() {
+  // Operator deployment policy: place the physical AGV at point 2 before
+  // booting. This initializes software position only; it never starts a trip.
+  drive(0, 0, true);
+  location = POINT_2;
+  destination = NO_NODE;
+  inspectionTrip = false;
+  publish(State::Ready);
+}
+
 bool appendRoute(Node from, Node to) {
   Node parents[NODE_COUNT];
   Node queue[NODE_COUNT];
@@ -1611,6 +1685,37 @@ bool requireControlKey(httpd_req_t* request);
 bool sessionConnected(unsigned long now);
 bool readController(httpd_req_t* request, char* controller, size_t size);
 
+esp_err_t showDiagnostics(httpd_req_t* request) {
+  if (!requireControlKey(request)) return ESP_OK;
+  portENTER_CRITICAL(&diagnosticsLock);
+  const auto snapshot = wifiDiagnostics.snapshot();
+  portEXIT_CRITICAL(&diagnosticsLock);
+  char part[256];
+  snprintf(part, sizeof(part), "{\"boot_id\":\"%s\",\"boot_number\":%lu,\"reset_reason\":%ld,\"uptime_ms\":%lu,\"wifi_status\":%d,\"last_rssi_dbm\":",
+    deviceBootId, static_cast<unsigned long>(snapshot.boot_number), static_cast<long>(snapshot.reset_reason),
+    static_cast<unsigned long>(millis()), static_cast<int>(WiFi.status()));
+  std::string body(part);
+  body.reserve(5000);
+  if (snapshot.last_rssi_dbm == WifiDiagnostics::UNKNOWN_RSSI) body += "null";
+  else { snprintf(part, sizeof(part), "%ld", static_cast<long>(snapshot.last_rssi_dbm)); body += part; }
+  body += ",\"events\":[";
+  for (unsigned i = 0; i < snapshot.count; ++i) {
+    const auto& event = WifiDiagnostics::oldest(snapshot, i);
+    if (i) body += ',';
+    snprintf(part, sizeof(part), "{\"sequence\":%lu,\"boot_number\":%lu,\"uptime_ms\":%lu,\"kind\":\"%s\",\"reason\":%ld,\"rssi_dbm\":",
+      static_cast<unsigned long>(event.sequence), static_cast<unsigned long>(event.boot_number),
+      static_cast<unsigned long>(event.uptime_ms), WifiDiagnostics::name(event.kind), static_cast<long>(event.reason));
+    body += part;
+    if (event.rssi_dbm == WifiDiagnostics::UNKNOWN_RSSI) body += "null";
+    else { snprintf(part, sizeof(part), "%ld", static_cast<long>(event.rssi_dbm)); body += part; }
+    body += '}';
+  }
+  body += "]}";
+  httpd_resp_set_type(request, "application/json; charset=utf-8");
+  httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+  return httpd_resp_sendstr(request, body.c_str());
+}
+
 esp_err_t showControlPage(httpd_req_t* request) {
   httpd_resp_set_type(request, "text/html; charset=utf-8");
   httpd_resp_set_hdr(request, "Cache-Control", "no-store");
@@ -1767,7 +1872,9 @@ void updateControlWatchdog(unsigned long) {
   // Sample time under the same lock as heartbeat updates. An older loop
   // timestamp would otherwise underflow after a concurrent newer heartbeat.
   const bool stop = controlSession.takeStopRequest(millis());
+  const bool expired = controlSession.takeExpirationEvent();
   portEXIT_CRITICAL(&controlLock);
+  if (expired) recordDiagnostic(WifiDiagnostics::HeartbeatExpired);
   if (!stop) return;
   portENTER_CRITICAL(&motionLock);
   const bool rcMoving = requestedMotion != Motion::Stop;
@@ -1991,15 +2098,22 @@ esp_err_t handleControlSocket(httpd_req_t* request) {
   return ESP_OK;
 }
 
+esp_err_t configureControlSocket(httpd_handle_t, int socket) {
+  // esp_http_server sends the status, optional headers and body in separate
+  // small writes. Do not leave a later header waiting on Nagle/delayed ACK.
+  const int enabled = 1;
+  if (setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled)) != 0) {
+    Serial.printf("AGV HTTP TCP_NODELAY failed: socket=%d errno=%d\n", socket, errno);
+    return ESP_FAIL;
+  }
+  return ESP_OK;
+}
+
 bool startControlServer() {
   snprintf(controlPath, sizeof(controlPath), "/control-%08lx%08lx",
     static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
-  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.lru_purge_enable = true;
-  config.max_uri_handlers = 17;
-  httpd_handle_t server = nullptr;
-  if (httpd_start(&server, &config) != ESP_OK) return false;
   const httpd_uri_t routes[] = {
+    {.uri = "/diagnostics", .method = HTTP_GET, .handler = showDiagnostics, .user_ctx = nullptr},
     {.uri = "/", .method = HTTP_GET, .handler = showControlPage, .user_ctx = nullptr},
     {.uri = "/status", .method = HTTP_GET, .handler = showStatus, .user_ctx = nullptr},
     {.uri = "/control/session", .method = HTTP_POST, .handler = controlSessionRequest, .user_ctx = nullptr},
@@ -2019,11 +2133,25 @@ bool startControlServer() {
     {.uri = "/mode", .method = HTTP_POST, .handler = handleCommand, .user_ctx = &modeRequest},
     {.uri = "/stop", .method = HTTP_POST, .handler = handleCommand, .user_ctx = &stopRequest},
   };
+  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  config.lru_purge_enable = true;
+  config.open_fn = configureControlSocket;
+  config.max_uri_handlers = static_cast<uint16_t>(sizeof(routes) / sizeof(routes[0]));
+  httpd_handle_t server = nullptr;
+  const esp_err_t started = httpd_start(&server, &config);
+  if (started != ESP_OK) {
+    Serial.printf("AGV HTTP start failed: %s (%d)\n", esp_err_to_name(started), static_cast<int>(started));
+    return false;
+  }
   for (const httpd_uri_t& routeHandler : routes) {
-    if (httpd_register_uri_handler(server, &routeHandler) == ESP_OK) continue;
+    const esp_err_t registered = httpd_register_uri_handler(server, &routeHandler);
+    if (registered == ESP_OK) continue;
+    Serial.printf("AGV HTTP route registration failed: %s: %s (%d)\n",
+      routeHandler.uri, esp_err_to_name(registered), static_cast<int>(registered));
     httpd_stop(server);
     return false;
   }
+  Serial.printf("AGV HTTP server ready: %u routes\n", static_cast<unsigned>(config.max_uri_handlers));
   return true;
 }
 
@@ -2037,13 +2165,18 @@ void setup() {
     boot[0], boot[1], boot[2], boot[3], boot[4], boot[5], boot[6], boot[7],
     boot[8], boot[9], boot[10], boot[11], boot[12], boot[13], boot[14], boot[15]);
   Serial.begin(115200);
+  const auto resetReason = esp_reset_reason();
+  portENTER_CRITICAL(&diagnosticsLock);
+  wifiDiagnostics.begin(static_cast<int>(resetReason), millis(),
+    resetReason != ESP_RST_POWERON && resetReason != ESP_RST_BROWNOUT);
+  lastDiagnosticSerialSequence = wifiDiagnosticStore.next_sequence - 2;
+  portEXIT_CRITICAL(&diagnosticsLock);
   Serial2.begin(9600, SERIAL_8N1, MOTOR_RX, MOTOR_TX);
   for (const LineSensor& sensor : SENSORS) pinMode(sensor.pin, INPUT);
   pinMode(REAR_RIGHT_PIN, INPUT);
   pinMode(REAR_LEFT_PIN, INPUT);
   pinMode(REAR_CENTER_PIN, INPUT);
-  drive(0, 0, true);
-  publish(State::Unknown);
+  initializeBootStandby();
   if (ledcAttach(FORK_SERVO_PIN, SERVO_PWM_HZ, SERVO_PWM_BITS)) {
     setForkAngle(FORK_LOWERED_ANGLE);
   } else {
@@ -2052,12 +2185,14 @@ void setup() {
   Serial.println("Connecting to 2.4 GHz Wi-Fi...");
   if (strlen(CONTROL_KEY) < 32) Serial.println("Configure a private device key in agv_secrets.h before controlling the AGV.");
   WiFi.mode(WIFI_STA);
+  WiFi.onEvent(onAgvWifiEvent);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   serverReady = startControlServer();
 }
 
 void loop() {
+  pollDiagnostics();
   static bool wasConnected = false;
   static unsigned long lastWifiReport = 0;
   static unsigned long lastControl = 0;

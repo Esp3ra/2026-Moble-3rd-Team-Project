@@ -1,5 +1,6 @@
 ﻿<UserControl x:Class="RobotFactory.Admin.Views.DashboardView"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <UserControl.Resources><BooleanToVisibilityConverter x:Key="TrialVisibility"/></UserControl.Resources>
  <Grid>
   <Grid.RowDefinitions><RowDefinition Height="Auto" MinHeight="30"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="128"/><RowDefinition Height="Auto" MinHeight="20"/></Grid.RowDefinitions>
   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -75,6 +76,21 @@
     <StackPanel Grid.Row="3" Margin="0,8,0,0"><StackPanel Orientation="Horizontal"><Button Content="검사 사진 보기" Click="Image_Click" IsEnabled="{Binding CanViewImage}" FontSize="11" MinHeight="26" Padding="6,2"/><Button Content="사진 삭제 · 최상위" Click="DeleteImage_Click" IsEnabled="{Binding CanDeleteImage}" FontSize="11" MinHeight="26" Padding="6,2" Margin="6,0"/></StackPanel><TextBlock Text="{Binding InspectionSummary}" FontSize="14" FontWeight="SemiBold"/><TextBlock Text="{Binding ActionStatus}" FontSize="12" Margin="0,6" Foreground="{StaticResource Muted}"/></StackPanel>
    </Grid></Border>
    <TabControl Grid.Column="4">
+    <TabItem Header="실장비 혼합시험" Visibility="{Binding IsMixedTrial,Converter={StaticResource TrialVisibility}}">
+     <StackPanel Margin="12">
+      <TextBlock Text="컨베이어·액추에이터·AGV 시험" Style="{StaticResource Heading}"/>
+      <TextBlock Text="LINE·AGV는 실제 장비입니다. 로봇팔 조립·CAM2 좌표·YOLO 검사만 모의 처리합니다. CAM1 QR과 IR1·IR2 정차는 실제 확인합니다." TextWrapping="Wrap" Margin="0,10"/>
+      <TextBlock Text="목적지"/>
+      <ComboBox ItemsSource="{Binding TrialDestinations}" DisplayMemberPath="Label" SelectedItem="{Binding SelectedTrialDestination,Mode=TwoWay}" IsEnabled="{Binding CanSelectTrialDestination}" Margin="0,6,0,12"/>
+      <Button Content="{Binding MixedTrialButtonLabel}" Click="MixedTrial_Click" IsEnabled="{Binding CanRunMixedTrial}"/>
+      <CheckBox Content="AGV 실제 2번·무적재 / 컨베·액추 정지 / 컨베 비움 확인" IsChecked="{Binding StandbyConfirmed,Mode=TwoWay}" Margin="0,12,0,4"/>
+      <Button Content="현장 확인 후 대기 복구" Click="RecoverStandby_Click" IsEnabled="{Binding CanRecoverStandby}"/>
+      <TextBlock Text="활성 주문·미완료 동작이 있으면 대기 복구는 차단됩니다. 주행 중 오류는 현장 확인 탭에서 해당 명령을 대조하세요." TextWrapping="Wrap" FontSize="12" Margin="0,5"/>
+      <TextBlock Text="AGV 2번·지게 85°, 배터리 전원, 팔레트 배치·경로를 확인하세요. 시험 시작 시 액추에이터 배출부터 배송·하역·2번 복귀까지 실제로 동작합니다." TextWrapping="Wrap" Foreground="#AB2838" Margin="0,12"/>
+      <TextBlock Text="장비가 준비되지 않으면 시작이 차단됩니다. 전체 공정 정지·정지 해제 버튼은 위쪽에 있습니다. 각 시험에는 READY 상태의 팔레트를 사용하세요. 하역한 팔레트는 자동 재사용하지 않습니다." TextWrapping="Wrap"/>
+      <TextBlock Text="{Binding ActionStatus}" TextWrapping="Wrap" Margin="0,12"/>
+     </StackPanel>
+    </TabItem>
     <TabItem Header="재고"><StackPanel Margin="12"><TextBlock Text="좌우 공용 부품 재고" Style="{StaticResource Heading}"/>
      <ItemsControl ItemsSource="{Binding Stock}"><ItemsControl.ItemTemplate><DataTemplate><Grid Height="38"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><TextBlock Text="{Binding StockKey}"/><TextBlock Grid.Column="1" Text="{Binding AvailableUnits}"/></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
      <TextBlock Text="입고 부품" Margin="0,12,0,4"/><ComboBox ItemsSource="{Binding Stock}" DisplayMemberPath="StockKey" SelectedValuePath="StockKey" SelectedValue="{Binding StockKey,Mode=TwoWay}" IsEnabled="{Binding CanAdminister}"/>

@@ -12,6 +12,7 @@ import argparse
 import base64
 import hmac
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import ValidationError
@@ -107,8 +109,9 @@ class Adapter:
             # Migrate existing journals: retain every observed cycle, not only
             # the most recent one. Tombstones survive recovery and restart.
             for (encoded,) in self.db.execute("SELECT body FROM agv_commands").fetchall():
-                cycle = json.loads(encoded)["cycle_id"]
-                if cycle:
+                recorded = json.loads(encoded)
+                cycle = recorded["cycle_id"]
+                if cycle and recorded['action'] not in {'PAUSE','RESUME'}:
                     self.db.execute("INSERT OR IGNORE INTO agv_cycles VALUES (?)", (str(uuid.UUID(cycle)),))
             for cycle in (self.lane.get("cycle_id"), self.lane.get("last_cycle_id")):
                 if cycle:
@@ -263,7 +266,12 @@ class Adapter:
             if any(b["action"] in {"PAUSE", "RESUME"} for b, _, _ in pending):
                 raise Problem(409, "BAD_TRANSITION", "Pause or resume is still pending", "QUERY_FIRST")
             if action in {"PAUSE", "RESUME"}:
-                if body["cycle_id"] != self.lane["cycle_id"]:
+                # A plant can be paused before its first AGV pickup. Keep that
+                # control context separate from the AGV's physical work cycle.
+                idle_control = (action == 'PAUSE' and self.lane['cycle_id'] is None
+                                and self.lane['phase'] in {'READY','CLOSED'} and not pending)
+                expected_cycle = self.lane.get('pause_cycle_id',self.lane['cycle_id']) if action == 'RESUME' else self.lane['cycle_id']
+                if body["cycle_id"] != expected_cycle and not idle_control:
                     raise Problem(409, "STALE_CYCLE", "Pause cycle does not match the current cycle")
                 if action == "PAUSE" and self.lane["pause_id"]:
                     raise Problem(409, "BAD_TRANSITION", "Already paused")
@@ -298,6 +306,7 @@ class Adapter:
                     self.lane.update(cycle_id=body["cycle_id"], inspection_id=None, destination=None)
                 if action == "PAUSE":
                     self.lane["pause_id"] = body["command_id"]
+                    self.lane['pause_cycle_id'] = body['cycle_id']
                     self.lane["paused_at"] = self.clock()
                 self._save_lane()
             self._last_pending = json.loads(json.dumps(pending + [(body, result, plan)]))
@@ -361,6 +370,7 @@ class Adapter:
                             original_plan["operation_id"] = plan["operation_id"]
                         self._save(original, original_result, original_plan)
                 self.lane["pause_id"] = None
+                self.lane.pop('pause_cycle_id',None)
             elif action not in {"PAUSE"}:
                 self.lane["phase"] = "CLOSED" if action == "RETURN_STANDBY" else action
                 if action == "RETURN_STANDBY":
@@ -431,7 +441,14 @@ class Adapter:
                     self._persist_faults()
                     if self._storage_fault:
                         return
-                raw = self.client.status()
+                try:
+                    raw = self.client.status()
+                except OSError as error:
+                    if isinstance(error,HTTPError):raise
+                    # Retrying GET cannot replay movement. Give the heartbeat
+                    # its existing priority before one fresh status observation.
+                    logging.getLogger(__name__).warning('AGV status GET failed (%s); retrying GET once',type(error).__name__)
+                    raw = self.client.status()
                 self._validate_raw(raw)
                 previous = self.raw
                 self.raw, self.online, self.observed_at = raw, True, utc()
@@ -680,8 +697,8 @@ def main():
     parser.add_argument("--listen", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--command-timeout-seconds", type=float, required=True, help="Measured completion timeout profile")
-    parser.add_argument("--poll-seconds", type=float, default=0.1)
-    parser.add_argument("--heartbeat-seconds", type=float, default=0.5, help="Existing firmware test default, not final team timing")
+    parser.add_argument("--poll-seconds", type=float, default=1.0)
+    parser.add_argument("--heartbeat-seconds", type=float, default=0.3, help="Comparison-test default, not final team timing")
     parser.add_argument("--confirm-standby-recovery", metavar="OPERATOR_REASON")
     args = parser.parse_args()
     # Configure secrets outside the repository. The adapter is localhost-only by

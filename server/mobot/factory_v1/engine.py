@@ -2,6 +2,7 @@
 import threading
 from .common import *
 from . import contracts, placements
+from .keepalive import DeviceKeepalives
 
 TRANSITIONS={
  'DISPENSE':('DISPENSING','TO_ASSEMBLY','LINE','MOVE_TO_ASSEMBLY'),
@@ -26,6 +27,7 @@ class Engine:
         self.closed=threading.Event()
         self.worker=None
         self.instance_id=uid();self.acquired=False
+        self.keepalives=DeviceKeepalives(self)
         for client in clients.values():
             if hasattr(client,"call"):client.renew_lease=self.acquire
 
@@ -89,6 +91,7 @@ class Engine:
             return False
         cameras=self.vision.ready()
         required_cameras=('cam1','cam2','cam4',self.vision.inspection_camera or 'cam3')
+        if self.app.config.get('V1_MIXED_TRIAL'):required_cameras=('cam1',)
         return (len(devices)==len(self.required_devices)
                 and all(d['online'] and d['state']=='IDLE' and d['mode']=='AUTO' for d in devices)
                 and all(cameras.get(c,False) for c in required_cameras)
@@ -106,6 +109,8 @@ class Engine:
         db.execute("UPDATE V1_PLANT SET state='RUNNING',stage='DISPENSING',cycle_id=?,updated_at=? WHERE id=1",(cycle,now()))
         cmd=self.queue(db,'LINE',cycle,'DISPENSE',ticket=plant['action_request'])
         history(db,self.cycle(db),'DISPENSE_REQUESTED','수락 순서에 따라 한 장 배출 요청을 저장했습니다.',cmd)
+        if self.app.config.get('V1_MIXED_TRIAL'):
+            history(db,self.cycle(db),'MIXED_TRIAL','실장비 혼합시험 · LINE/AGV 실물 · 로봇팔 조립/CAM2 좌표/YOLO 검사 모의 · CAM1 QR 실물')
 
     def plant(self):
         with self.app.app_context(),transaction() as db:
@@ -272,6 +277,8 @@ class Engine:
             db.execute("UPDATE V1_CYCLES SET closed=1,stage='CLOSED',updated_at=? WHERE cycle_id=?",(now(),cycle['cycle_id']))
             db.execute("UPDATE V1_PALLETS SET cycle_id=NULL,stage='AWAIT_MANUAL_RETURN',updated_at=? WHERE pallet_id=?",(now(),cycle['pallet_id']))
             db.execute("UPDATE V1_PLANT SET state='READY',stage='READY',cycle_id=NULL,updated_at=? WHERE id=1",(now(),))
+            if self.app.config.get('V1_MIXED_TRIAL'):
+                db.execute('UPDATE V1_PLANT SET auto_enabled=0 WHERE id=1')
         elif next_action:
             params={}
             if next_action in ('PICK_UP','DELIVER','UNLOAD'):
@@ -568,6 +575,7 @@ class Engine:
     def start(self):
         if self.worker:return
         self.acquire()
+        self.keepalives.start()
         def loop():
             with self.app.app_context():
                 while not self.closed.wait(.2):
@@ -578,7 +586,10 @@ class Engine:
         self.worker=threading.Thread(target=loop,name='factory-v1',daemon=True);self.worker.start()
 
     def close(self):
+        recovery=self.app.extensions.get('mixed_trial_recovery')
+        if recovery:recovery.close()
         self.closed.set()
+        self.keepalives.close()
         if self.worker:self.worker.join(timeout=3)
         self.vision.close()
         if self.acquired:

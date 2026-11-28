@@ -3,6 +3,7 @@
 메인 PC에서 Flask·SQLite와 카메라를 함께 실행합니다. WPF와 구매 웹은 /api/v1을 사용합니다. 서버가 Pi·로봇팔·AGV 연결 모듈의 /device/v1에 명령을 보내고, 각 모듈이 /api/v1/device-events로 완료를 보고합니다. WPF에서 수락한 주문은 수락 순으로 한 번에 한 회차씩 처리합니다.
 
 - 관리자 앱은 저장소의 WPF/RobotFactory.sln에 있습니다.
+- 로봇팔·검사 대역과 실물 LINE/AGV를 연결하는 [혼합시험](../../docs/MIXED_TRIAL.md)은 별도 DB·명시적 실행 옵션에서만 사용합니다.
 - 현장 Pi 부팅 서비스와 USB 연결은 [LINE 배포 안내](../../devices/line_pi/README.md)를 따릅니다.
 - UNO 펌웨어는 [RobotWorkSimulation.ino](../../firmware/RobotWorkSimulation/RobotWorkSimulation.ino)에 있습니다.
 - 네 칸의 WPF 관제는 CAM1 QR ROI, CAM2 장착 위치 보정, CAM3 검사 영상, CAM4 전체 관제입니다. [QR ROI 설정](QR_ROI_INTEGRATION.md)

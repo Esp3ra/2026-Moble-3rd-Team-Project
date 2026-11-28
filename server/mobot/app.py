@@ -167,7 +167,7 @@ def create_app():
     return app
 
 
-def main():
+def main(application_factory=None):
     host = os.environ.get("MOBOT_HOST", "127.0.0.1")
     port = int(os.environ.get("MOBOT_PORT", "8000"))
 
@@ -180,7 +180,7 @@ def main():
                            trusted_proxy="127.0.0.1", trusted_proxy_count=1,
                            trusted_proxy_headers={"x-forwarded-for"})
     try:
-        app = create_app()
+        app = (application_factory or create_app)()
         settings = app.config['V1_SETTINGS'].get('devices', {}) if app.config['V1_MODE']=='HARDWARE' else {}
         with start_transports(settings):
             app.extensions['mobot_start']()

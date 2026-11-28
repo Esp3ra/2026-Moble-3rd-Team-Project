@@ -39,6 +39,7 @@ public:
 
     bool connected(uint32_t now) {
         if (open_ && static_cast<uint32_t>(now - lastHeartbeat_) >= timeoutMs_) {
+            expirationPending_ = true;
             revoke();
         }
         return open_;
@@ -79,7 +80,14 @@ public:
         return requested;
     }
 
+    bool takeExpirationEvent() {
+        const bool expired = expirationPending_;
+        expirationPending_ = false;
+        return expired;
+    }
+
 private:
+    bool expirationPending_ = false;
     static bool validCharacter(char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
             (c >= '0' && c <= '9') || c == '-' || c == '_';

@@ -176,6 +176,21 @@ class AdapterTests(unittest.TestCase):
         self.complete(self.body("RESUME", {"pause_command_id": pause["command_id"]}, cycle=None))
         self.assertEqual(self.adapter.status()["state"], "IDLE")
 
+    def test_plant_pause_before_pickup_does_not_consume_the_work_cycle(self):
+        pause=self.body('PAUSE')
+        self.complete(pause)
+        self.assertIsNone(self.adapter.lane['cycle_id'])
+        self.assert_problem(409,lambda:self.accept(self.body('RESUME',{'pause_command_id':pause['command_id']},cycle=identifier())))
+        self.complete(self.body('RESUME',{'pause_command_id':pause['command_id']}))
+        self.assertEqual([c[0] for c in self.device.calls],['pause','resume'])
+        self.assertIsNone(self.adapter.lane['cycle_id'])
+        self.adapter.close()
+        self.adapter=Adapter(self.device,self.path,30,clock=lambda:self.now)
+        self.adapter.step()
+        self.assertIsNone(self.adapter.db.execute('SELECT id FROM agv_cycles WHERE id=?',(self.cycle,)).fetchone())
+        self.accept(self.body('PICK_UP'))
+        self.assertEqual(self.adapter.status()["state"], "BUSY")
+
     def test_lost_response_is_unknown_without_replaying_physical_move(self):
         self.device.fail_send = True
         body = self.body("PICK_UP")
@@ -201,6 +216,21 @@ class AdapterTests(unittest.TestCase):
         self.adapter.step()
         self.assertEqual(self.adapter.command(body["command_id"])["state"], "UNKNOWN")
         self.assertFalse(self.adapter.status()["online"])
+
+    def test_transient_status_timeout_is_reobserved_without_any_motion_retry(self):
+        with patch.object(self.device,'status',side_effect=[TimeoutError('headers delayed'),self.device.status()]) as status:
+            self.adapter.step()
+        self.assertEqual(status.call_count,2)
+        self.assertTrue(self.adapter.status()['online'])
+        self.assertEqual(self.adapter.status()['state'],'IDLE')
+        self.assertEqual(self.device.calls,[])
+
+    def test_two_failed_status_reads_still_report_offline(self):
+        with patch.object(self.device,'status',side_effect=TimeoutError('no response')) as status:
+            self.adapter.step()
+        self.assertEqual(status.call_count,2)
+        self.assertFalse(self.adapter.status()['online'])
+        self.assertEqual(self.device.calls,[])
 
     def test_completion_timeout_does_not_resend(self):
         body = self.body("PICK_UP")
