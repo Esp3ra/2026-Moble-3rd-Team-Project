@@ -106,8 +106,12 @@ class PcVision:
         if self.simulation:return True
         camera=self.inspection_camera
         if not camera or self.config.get('vision_profile_approved') is not True:return False
-        inspector=(self.auto_inspector if camera=='cam1' else getattr(self.plugin,'inspect_product',None))
-        return inspector is not None and self.ready()[camera]
+        if camera=='cam1':
+            with self.lock:
+                sample=self.frames.get(camera)
+                return bool(self.auto_inspector is not None and sample and time.monotonic()-sample[0]<2
+                            and self.auto_inspector.accepts_frame(sample[1]))
+        return getattr(self.plugin,'inspect_product',None) is not None and self.ready()[camera]
 
     def read_feed_qr(self,cycle,read_id,attempt,sample=None):
         if self.simulation:

@@ -88,9 +88,10 @@ class Engine:
         if not (contracts.valid_order(self.vision.part_order) and placements.supports_refresh(db)):
             return False
         cameras=self.vision.ready()
+        required_cameras=('cam1','cam2','cam4',self.vision.inspection_camera or 'cam3')
         return (len(devices)==len(self.required_devices)
                 and all(d['online'] and d['state']=='IDLE' and d['mode']=='AUTO' for d in devices)
-                and all(cameras.get(c,False) for c in ('cam1','cam2','cam3','cam4'))
+                and all(cameras.get(c,False) for c in required_cameras)
                 and self.vision.assembly_ready() and self.vision.inspection_ready())
 
     def start_next(self,db):
@@ -136,7 +137,7 @@ class Engine:
             action=data['action']
             if action=='START':
                 require(plant['state'] in ('READY','NOT_READY') and not cycle,'현재 공정에서 시작할 수 없습니다.',409,'BAD_TRANSITION')
-                require(self.ready(db),'세 장비와 카메라 4대 준비를 확인하세요.',503,'DEVICE_UNAVAILABLE','QUERY_FIRST')
+                require(self.ready(db),'세 장비, 사용 중인 카메라, 검사 해상도와 보정을 확인하세요.',503,'DEVICE_UNAVAILABLE','QUERY_FIRST')
                 db.execute("UPDATE V1_PLANT SET state='READY',auto_enabled=1,action_request=?,updated_at=? WHERE id=1",(data['request_id'],now()))
                 db.execute("INSERT INTO V1_TICKETS VALUES(?,'PLANT','ACCEPTED',NULL,NULL)",(data['request_id'],))
                 self.start_next(db)

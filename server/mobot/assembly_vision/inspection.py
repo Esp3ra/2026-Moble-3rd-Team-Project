@@ -24,6 +24,7 @@ INPUT_SIZE = 640
 CANDIDATE_THRESHOLD = 0.25
 SEEN_THRESHOLD = 0.60
 ANCHOR_THRESHOLD = 0.84
+ANCHOR_SCORE_MARGIN = 0.025
 EMPTY_DISTANCE_LIMIT = 12.0
 ROTATIONS = {0: None, 90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}
 
@@ -145,6 +146,7 @@ class AutomaticInspector:
         if type(rotation) is not int or rotation not in ROTATIONS:
             raise ValueError("검사 영상의 시계 방향 회전은 0, 90, 180, 270으로 지정하세요.")
         self.rotation = ROTATIONS[rotation]
+        self.source_shape = reference.shape
         reference = self._orient(reference)
         empty = self._orient(empty) if empty is not None else None
         self.detector = detector
@@ -191,6 +193,10 @@ class AutomaticInspector:
     def _orient(self, frame):
         return frame if self.rotation is None else cv2.rotate(frame, self.rotation)
 
+    def accepts_frame(self, frame):
+        # Equal source dimensions imply equal dimensions after the same rotation.
+        return frame is not None and frame.shape == self.source_shape and frame.dtype == np.uint8
+
     @staticmethod
     def _body_anchor(parts):
         left, right = parts["left"].center, parts["right"].center
@@ -225,12 +231,22 @@ class AutomaticInspector:
         _, score, _, (x, y) = cv2.minMaxLoc(scores)
         if not np.isfinite(score) or score < ANCHOR_THRESHOLD:
             return None
+        local_maxima = cv2.compare(scores, cv2.dilate(scores, np.ones((3, 3), np.uint8)), cv2.CMP_EQ)
+        nearby = max(2, round(min(self.template.shape) * .05))
+        # Neighboring peaks describe the same position within the template's pixel tolerance.
+        local_maxima[max(0, y - nearby):y + nearby + 1, max(0, x - nearby):x + nearby + 1] = 0
+        _, competing_score, _, _ = cv2.minMaxLoc(scores, mask=local_maxima)
+        if competing_score >= score - ANCHOR_SCORE_MARGIN:
+            return None
         dx, dy = search.x1 + x - anchor.x1, search.y1 + y - anchor.y1
         return {slot: box.move(dx, dy) for slot, box in self.regions.items()}
 
     def inspect_product(self, *, cycle_id, inspection_id, frame, frame_id, captured_at, qr_read):
-        frame = self._orient(frame)
-        aligned = self._registered_regions(frame)
+        if self.accepts_frame(frame):
+            frame = self._orient(frame)
+            aligned = self._registered_regions(frame)
+        else:
+            aligned = None
         observations = {slot: observation("UNKNOWN") for slot in SLOT_NAMES}
         if aligned is not None:
             height, width = frame.shape[:2]

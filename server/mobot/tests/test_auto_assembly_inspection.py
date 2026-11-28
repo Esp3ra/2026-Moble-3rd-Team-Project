@@ -76,6 +76,20 @@ class InspectorTests(unittest.TestCase):
         result = self.check(inspector, draw_scene(PARTS[:1] + PARTS[2:]))
         self.assertEqual(contracts.inspect_result(result, SPEC, "PALLET-01", 3)[0], "INDETERMINATE")
 
+    def test_close_score_peaks_belong_to_the_same_torso_position(self):
+        detector = Mock(version="test")
+        detector.detect.return_value = PARTS
+        frame = draw_scene()
+        inspector = AutomaticInspector(detector, frame)
+        search_radius = round(max(frame.shape[:2]) * .09)
+        scores = np.zeros((2 * search_radius + 1, 2 * search_radius + 1), dtype=np.float32)
+        scores[search_radius, search_radius] = 1.0
+        scores[search_radius, search_radius + 2] = 0.995
+        scores[search_radius, search_radius + 20] = 0.90
+        with patch("assembly_vision.inspection.cv2.matchTemplate", return_value=scores):
+            result = self.check(inspector, frame)
+        self.assertEqual(contracts.inspect_result(result, SPEC, "PALLET-01", 3)[0], "PASS")
+
     def test_cam1_uses_raw_frame_for_both_qr_and_automatic_inspection(self):
         with tempfile.TemporaryDirectory() as folder:
             app = SimpleNamespace(logger=Mock(), config={
